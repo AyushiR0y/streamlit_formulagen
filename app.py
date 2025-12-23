@@ -14,8 +14,8 @@ import time
 import traceback
 from pathlib import Path
 import pandas as pd
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 import numpy as np
 from collections import defaultdict
 
