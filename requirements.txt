@@ -11,6 +11,7 @@ streamlit-javascript
 # LangChain dependencies
 langchain>=0.0.300
 langchain-openai>=0.0.5
+langchain-text-splitters
 faiss-cpu>=1.7.4
 tiktoken>=0.4.0
 
