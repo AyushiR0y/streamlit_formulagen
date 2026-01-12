@@ -687,7 +687,7 @@ def extract_text_from_file(file_bytes, file_extension):
                     st.info(f"📊 Word document size: {len(text)} characters. Using stable chunking.")
                 return text
             except ImportError:
-                st.error("`python-docx` not installed. Please install it: `pip install python-docx`")
+                st.error("File type not recognised or required library not installed.")
                 return ""
         
         else:
@@ -697,9 +697,6 @@ def extract_text_from_file(file_bytes, file_extension):
         st.error(f"Error extracting text from file: {e}")
         return ""
 
-# Usage example:
-# extractor = StableChunkedDocumentFormulaExtractor(DEFAULT_TARGET_OUTPUT_VARIABLES)
-# result = extractor.extract_formulas_from_document(document_text)
 
 # --- UI Styling and Helper Functions ---
 def set_custom_css():
