@@ -50,11 +50,17 @@ else:
 def load_embedding_model():
     """Load sentence transformer model for vector embeddings"""
     try:
+        import ssl
+        import certifi
+        
+        # Create SSL context that uses certifi certificates
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        
         # Use a lightweight model for efficiency
         model = SentenceTransformer('all-MiniLM-L6-v2')
         return model
     except Exception as e:
-        st.warning(f"Could not load local embedding model: {e}")
+        # Silently fail and return None - we'll skip vector embeddings
         return None
 
 EMBEDDING_MODEL_LOCAL = load_embedding_model()
@@ -82,6 +88,7 @@ class VariableHeaderMatcher:
     
     def __init__(self):
         self.mappings: Dict[str, VariableMapping] = {}
+        self.embedding_cache: Dict[str, np.ndarray] = {}
         
     def normalize_text(self, text: str) -> str:
         """Normalize text for comparison"""
@@ -91,22 +98,59 @@ class VariableHeaderMatcher:
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
     
+    def expand_abbreviations(self, text: str) -> str:
+        """Expand common insurance/financial abbreviations"""
+        abbreviations = {
+            'sa': 'sum assured',
+            'dob': 'date of birth',
+            'fup': 'first unpaid premium',
+            'gsv': 'guaranteed surrender value',
+            'ssv': 'special surrender value',
+            'rop': 'return of premium',
+            'ap': 'annual premium',
+            'pp': 'premium paid',
+            'amt': 'amount',
+            'calc': 'calculation',
+            'freq': 'frequency',
+            'mat': 'maturity',
+            'ben': 'benefit',
+            'dt': 'date',
+            'no': 'number',
+            'yr': 'year',
+            'pct': 'percent',
+            'val': 'value',
+            'pd': 'paid',
+            'term': 'term',
+            'pol': 'policy'
+        }
+        
+        text_lower = text.lower()
+        for abbr, full in abbreviations.items():
+            # Replace whole word abbreviations
+            text_lower = re.sub(r'\b' + abbr + r'\b', full, text_lower)
+        
+        return text_lower
+    
     def lexical_similarity(self, var: str, header: str) -> float:
         """Calculate lexical similarity using multiple methods"""
         var_norm = self.normalize_text(var)
         header_norm = self.normalize_text(header)
         
+        # Expand abbreviations for better matching
+        var_expanded = self.expand_abbreviations(var_norm)
+        header_expanded = self.expand_abbreviations(header_norm)
+        
         # Exact match
-        if var_norm == header_norm:
+        if var_expanded == header_expanded:
             return 1.0
         
         # Substring match
-        if var_norm in header_norm or header_norm in var_norm:
+        if var_expanded in header_expanded or header_expanded in var_expanded:
             return 0.9
         
         # Token-based matching
-        var_tokens = set(var_norm.split())
-        header_tokens = set(header_norm.split())
+        var_tokens = set(var_expanded.split())
+        header_tokens = set(header_expanded.split())
         
         if var_tokens and header_tokens:
             intersection = len(var_tokens & header_tokens)
@@ -122,17 +166,77 @@ class VariableHeaderMatcher:
         var_norm = self.normalize_text(var)
         header_norm = self.normalize_text(header)
         
-        # Levenshtein-based ratio
-        ratio = fuzz.ratio(var_norm, header_norm) / 100.0
-        partial_ratio = fuzz.partial_ratio(var_norm, header_norm) / 100.0
-        token_sort_ratio = fuzz.token_sort_ratio(var_norm, header_norm) / 100.0
+        # Expand abbreviations
+        var_expanded = self.expand_abbreviations(var_norm)
+        header_expanded = self.expand_abbreviations(header_norm)
         
-        # Weighted average
-        score = (ratio * 0.4 + partial_ratio * 0.3 + token_sort_ratio * 0.3)
+        # Levenshtein-based ratios
+        ratio = fuzz.ratio(var_expanded, header_expanded) / 100.0
+        partial_ratio = fuzz.partial_ratio(var_expanded, header_expanded) / 100.0
+        token_sort_ratio = fuzz.token_sort_ratio(var_expanded, header_expanded) / 100.0
+        token_set_ratio = fuzz.token_set_ratio(var_expanded, header_expanded) / 100.0
+        
+        # Weighted average favoring token-based matching
+        score = (ratio * 0.25 + partial_ratio * 0.25 + token_sort_ratio * 0.25 + token_set_ratio * 0.25)
         return score
     
+    def get_embedding(self, text: str, use_azure: bool = False) -> Optional[np.ndarray]:
+        """Get vector embedding for text using local model or Azure"""
+        # Check cache first
+        if text in self.embedding_cache:
+            return self.embedding_cache[text]
+        
+        embedding = None
+        
+        # Try local model first (preferred for speed and cost)
+        if EMBEDDING_MODEL_LOCAL is not None:
+            try:
+                embedding = EMBEDDING_MODEL_LOCAL.encode(text, convert_to_numpy=True)
+                self.embedding_cache[text] = embedding
+                return embedding
+            except Exception as e:
+                st.warning(f"Local embedding failed: {e}")
+        
+        # Fallback to Azure embeddings if local fails and use_azure is True
+        if use_azure and client is not None:
+            try:
+                response = client.embeddings.create(
+                    model=EMBEDDING_MODEL,
+                    input=text
+                )
+                embedding = np.array(response.data[0].embedding)
+                self.embedding_cache[text] = embedding
+                return embedding
+            except Exception as e:
+                st.warning(f"Azure embedding failed: {e}")
+        
+        return None
+    
+    def vector_similarity(self, var: str, header: str, use_azure_embeddings: bool = False) -> Tuple[float, str]:
+        """Calculate semantic similarity using vector embeddings"""
+        # Prepare text with context for better embeddings
+        var_context = f"insurance policy variable: {self.expand_abbreviations(var)}"
+        header_context = f"data column header: {self.expand_abbreviations(header)}"
+        
+        # Get embeddings
+        var_embedding = self.get_embedding(var_context, use_azure=use_azure_embeddings)
+        header_embedding = self.get_embedding(header_context, use_azure=use_azure_embeddings)
+        
+        if var_embedding is None or header_embedding is None:
+            return 0.0, "embedding_unavailable"
+        
+        # Calculate cosine similarity
+        similarity = 1 - cosine(var_embedding, header_embedding)
+        
+        # Normalize to 0-1 range (cosine similarity can be -1 to 1)
+        similarity = (similarity + 1) / 2
+        
+        method = "vector_embedding_local" if EMBEDDING_MODEL_LOCAL else "vector_embedding_azure"
+        
+        return similarity, method
+    
     def semantic_similarity_ai(self, var: str, header: str) -> Tuple[float, str]:
-        """Calculate semantic similarity using AI"""
+        """Calculate semantic similarity using AI - LAST RESORT ONLY"""
         if MOCK_MODE or not client:
             return 0.0, "AI unavailable"
         
@@ -166,41 +270,102 @@ Format: SCORE: X.XX | REASON: explanation"""
             score = float(score_match.group(1)) if score_match else 0.0
             reason = reason_match.group(1).strip() if reason_match else "No explanation provided"
             
-            return min(score, 1.0), reason
+            return min(score, 1.0), f"semantic_ai ({reason[:50]}...)"
             
         except Exception as e:
             st.warning(f"AI semantic matching failed: {e}")
-            return 0.0, f"Error: {str(e)}"
+            return 0.0, f"AI_error: {str(e)}"
     
-    def find_best_match(self, variable: str, headers: List[str], use_ai: bool = True) -> Optional[VariableMapping]:
-        """Find the best matching header for a variable"""
+    def find_best_match(self, variable: str, headers: List[str], use_vector: bool = True, use_ai: bool = False) -> Optional[VariableMapping]:
+        """Find the best matching header for a variable using progressive matching strategies"""
         best_score = 0.0
         best_header = None
         best_method = None
         
+        # Stage 1: Lexical matching (fastest, cheapest)
         for header in headers:
-            # Lexical matching
             lex_score = self.lexical_similarity(variable, header)
             
-            # Fuzzy matching
+            if lex_score > best_score:
+                best_score = lex_score
+                best_header = header
+                best_method = "lexical"
+        
+        # If lexical match is very high, skip other methods
+        if best_score >= 0.95:
+            return VariableMapping(
+                variable_name=variable,
+                mapped_header=best_header,
+                confidence_score=best_score,
+                matching_method=best_method,
+                is_verified=True
+            )
+        
+        # Stage 2: Fuzzy matching (still fast and free)
+        fuzzy_best_score = 0.0
+        fuzzy_best_header = None
+        
+        for header in headers:
             fuzzy_score = self.fuzzy_similarity(variable, header)
             
-            # Combined score (before AI)
-            combined_score = max(lex_score, fuzzy_score)
-            
-            if combined_score > best_score:
-                best_score = combined_score
-                best_header = header
-                best_method = "lexical" if lex_score > fuzzy_score else "fuzzy"
+            if fuzzy_score > fuzzy_best_score:
+                fuzzy_best_score = fuzzy_score
+                fuzzy_best_header = header
         
-        # If we have a reasonable match, try AI for confirmation
-        if best_header and use_ai and best_score < 0.95:
-            ai_score, ai_reason = self.semantic_similarity_ai(variable, best_header)
+        # Update if fuzzy is better
+        if fuzzy_best_score > best_score:
+            best_score = fuzzy_best_score
+            best_header = fuzzy_best_header
+            best_method = "fuzzy"
+        
+        # If fuzzy match is very high, skip other methods
+        if best_score >= 0.90:
+            return VariableMapping(
+                variable_name=variable,
+                mapped_header=best_header,
+                confidence_score=best_score,
+                matching_method=best_method,
+                is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
+            )
+        
+        # Stage 3: Vector embeddings (moderate cost, good accuracy)
+        if use_vector and best_score < 0.85:
+            vector_best_score = 0.0
+            vector_best_header = None
+            vector_method = None
             
-            # If AI gives higher confidence, use it
-            if ai_score > best_score:
+            for header in headers:
+                vector_score, method = self.vector_similarity(variable, header)
+                
+                if vector_score > vector_best_score:
+                    vector_best_score = vector_score
+                    vector_best_header = header
+                    vector_method = method
+            
+            # Update if vector is better
+            if vector_best_score > best_score:
+                best_score = vector_best_score
+                best_header = vector_best_header
+                best_method = vector_method
+        
+        # If vector match is very high, skip AI
+        if best_score >= 0.85:
+            return VariableMapping(
+                variable_name=variable,
+                mapped_header=best_header,
+                confidence_score=best_score,
+                matching_method=best_method,
+                is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
+            )
+        
+        # Stage 4: AI semantic matching (LAST RESORT - expensive, slow)
+        if use_ai and best_score < 0.80 and best_header:
+            ai_score, ai_method = self.semantic_similarity_ai(variable, best_header)
+            
+            # Only use AI if it significantly improves confidence
+            if ai_score > best_score + 0.1:
                 best_score = ai_score
-                best_method = f"semantic_ai ({ai_reason[:50]}...)"
+                best_method = ai_method
         
         if best_header and best_score >= CONFIDENCE_THRESHOLDS['low']:
             return VariableMapping(
@@ -213,12 +378,22 @@ Format: SCORE: X.XX | REASON: explanation"""
         
         return None
     
-    def match_all_variables(self, variables: List[str], headers: List[str], use_ai: bool = True) -> Dict[str, VariableMapping]:
-        """Match all variables to headers"""
+    def match_all_variables(self, variables: List[str], headers: List[str], use_vector: bool = True, use_ai: bool = False) -> Dict[str, VariableMapping]:
+        """Match all variables to headers using progressive matching"""
         mappings = {}
         
-        for var in variables:
-            mapping = self.find_best_match(var, headers, use_ai)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        total_vars = len(variables)
+        
+        for idx, var in enumerate(variables):
+            # Update progress
+            progress = (idx + 1) / total_vars
+            progress_bar.progress(progress)
+            status_text.text(f"Matching variable {idx + 1}/{total_vars}: {var}")
+            
+            mapping = self.find_best_match(var, headers, use_vector=use_vector, use_ai=use_ai)
             if mapping:
                 mappings[var] = mapping
             else:
@@ -230,6 +405,9 @@ Format: SCORE: X.XX | REASON: explanation"""
                     matching_method="no_match",
                     is_verified=False
                 )
+        
+        progress_bar.empty()
+        status_text.empty()
         
         return mappings
 
@@ -446,9 +624,6 @@ def main():
     if 'excel_df' not in st.session_state:
         st.session_state.excel_df = None
     
-    # Extract variables from formulas
-    all_variables = extract_variables_from_formulas(st.session_state.formulas)
-    
     # Main content
     col1, col2 = st.columns([1, 1])
     
@@ -486,12 +661,26 @@ def main():
                     # Start mapping process
                     st.markdown("---")
                     
-                    use_ai = st.checkbox(
-                        "Use AI for semantic matching",
-                        value=not MOCK_MODE,
-                        help="Enable AI-powered semantic matching for better accuracy (requires API key)",
-                        disabled=MOCK_MODE
-                    )
+                    st.subheader("⚙️ Matching Configuration")
+                    
+                    col_cfg1, col_cfg2 = st.columns(2)
+                    
+                    with col_cfg1:
+                        use_vector = st.checkbox(
+                            "Use Vector Embeddings",
+                            value=True,
+                            help="Enable vector embedding-based semantic matching (recommended, uses local model)"
+                        )
+                    
+                    with col_cfg2:
+                        use_ai = st.checkbox(
+                            "Use AI as Last Resort",
+                            value=False,
+                            help="Enable AI-powered semantic matching only when other methods fail (requires API key, slower and more expensive)",
+                            disabled=MOCK_MODE
+                        )
+                    
+                    st.info("🔄 **Matching Strategy**: Lexical → Fuzzy → Vector Embeddings → AI (if enabled)")
                     
                     if st.button("🔗 Start Variable Mapping", type="primary"):
                         with st.spinner("Analyzing variables and matching with headers..."):
@@ -499,14 +688,38 @@ def main():
                             mappings = matcher.match_all_variables(
                                 list(all_variables),
                                 headers,
+                                use_vector=use_vector,
                                 use_ai=use_ai
                             )
                             st.session_state.variable_mappings = mappings
-                            st.success(f"✅ Mapped {len([m for m in mappings.values() if m.mapped_header])} out of {len(all_variables)} variables")
+                            
+                            # Show matching statistics
+                            total = len(mappings)
+                            mapped = len([m for m in mappings.values() if m.mapped_header])
+                            
+                            # Count by method
+                            method_counts = {}
+                            for m in mappings.values():
+                                if m.mapped_header:
+                                    method = m.matching_method.split('_')[0]  # Get base method name
+                                    method_counts[method] = method_counts.get(method, 0) + 1
+                            
+                            st.success(f"✅ Mapped {mapped} out of {total} variables")
+                            
+                            if method_counts:
+                                st.markdown("**Matching Methods Used:**")
+                                method_df = pd.DataFrame([
+                                    {"Method": method.title(), "Count": count}
+                                    for method, count in sorted(method_counts.items(), key=lambda x: -x[1])
+                                ])
+                                st.dataframe(method_df, hide_index=True, use_container_width=True)
     
     with col2:
         st.subheader("📋 Extracted Variables")
         st.markdown("These variables were identified in your formulas and need to be mapped to Excel headers.")
+        
+        # Extract variables from formulas
+        all_variables = extract_variables_from_formulas(st.session_state.formulas)
         
         if all_variables:
             var_df = pd.DataFrame({
