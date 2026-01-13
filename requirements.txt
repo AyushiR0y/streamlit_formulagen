@@ -19,5 +19,8 @@ nltk>=3.8.1
 
 openpyxl==3.1.2
 xlrd==2.0.1
+fuzzywuzzy
+python-Levenshtein
+
 
 certifi
