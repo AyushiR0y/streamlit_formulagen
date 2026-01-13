@@ -3,33 +3,26 @@ python-dotenv
 openai
 
 # PDF & DOCX
-pymupdf>=1.21.0
-pdfplumber>=0.7.0
-PyPDF2>=3.0.0
+pymupdf
+pdfplumber
+PyPDF2
 pdfminer.six
-python-docx>=0.8.11
+python-docx
 
-# LangChain + embeddings
-langchain>=0.0.300
-langchain-openai>=0.0.5
+# Embeddings
+torch>=2.0.0
+transformers>=4.36.0
+sentence-transformers>=2.6.0
+scipy
+
+# LangChain (if needed)
+langchain
+langchain-openai
 langchain-text-splitters
-faiss-cpu>=1.7.4
-torch
-transformers
-sentence-transformers
-tiktoken>=0.4.0
-scipy==1.11.4
-
-# Text processing
-nltk>=3.8.1
-spacy>=3.4.0
 
 # Excel
-openpyxl==3.1.2
-xlrd==2.0.1
+openpyxl
+xlrd
 
-# Fuzzy matching (better than fuzzywuzzy)
+# Matching
 rapidfuzz
-
-# UI helpers
-streamlit-javascript
