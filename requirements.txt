@@ -9,11 +9,6 @@ PyPDF2
 pdfminer.six
 python-docx
 
-# Embeddings
-torch>=2.0.0
-transformers>=4.36.0
-sentence-transformers>=2.6.0
-scipy
 
 # LangChain (if needed)
 langchain
@@ -22,6 +17,7 @@ langchain-text-splitters
 
 # Excel
 openpyxl
+pandas
 xlrd
 
 # Matching
