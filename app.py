@@ -151,7 +151,55 @@ class DocumentExtractionResult:
 
     def to_dict(self):
         return asdict(self)
+def get_file_hash(file_bytes: bytes) -> str:
+    """Generate a unique hash for a file based on its content"""
+    return hashlib.md5(file_bytes).hexdigest()
 
+# Add this cached function BEFORE the StableChunkedDocumentFormulaExtractor class
+@st.cache_data(ttl=3600, show_spinner=False)
+def extract_formulas_cached(
+    file_hash: str,
+    text: str,
+    target_outputs: List[str],
+    chunk_size: int,
+    chunk_overlap: int
+) -> Dict:
+    """
+    Cached formula extraction - returns serializable dictionary.
+    
+    Args:
+        file_hash: MD5 hash of the uploaded file
+        text: Extracted text from document
+        target_outputs: List of formula names to extract
+        chunk_size: Chunking configuration
+        chunk_overlap: Chunking configuration
+    
+    Returns:
+        Dictionary representation of DocumentExtractionResult
+    """
+    extractor = StableChunkedDocumentFormulaExtractor(target_outputs=target_outputs)
+    result = extractor.extract_formulas_from_document(text)
+    
+    # Convert to serializable dictionary
+    return {
+        'input_variables': result.input_variables,
+        'basic_derived_formulas': result.basic_derived_formulas,
+        'extracted_formulas': [
+            {
+                'formula_name': f.formula_name,
+                'formula_expression': f.formula_expression,
+                'variants_info': f.variants_info,
+                'business_context': f.business_context,
+                'confidence': f.confidence,
+                'source_method': f.source_method,
+                'document_evidence': f.document_evidence,
+                'specific_variables': f.specific_variables
+            }
+            for f in result.extracted_formulas
+        ],
+        'extraction_summary': result.extraction_summary,
+        'overall_confidence': result.overall_confidence
+    }
 class StableChunkedDocumentFormulaExtractor:
     """Extracts formulas from large documents using stable chunking ratios"""
 
@@ -1411,7 +1459,8 @@ def main():
                     else:
                         with st.spinner("Analyzing document and extracting formulas... This may take a moment."):
                             file_extension = Path(uploaded_file.name).suffix.lower()
-                            text = extract_text_from_file(uploaded_file.read(), file_extension)
+                            file_bytes = uploaded_file.read()
+                            text = extract_text_from_file(file_bytes, file_extension)
 
                             if not text.strip():
                                 st.error("Could not extract readable text from the uploaded file. Please ensure it contains text content.")
@@ -1419,8 +1468,50 @@ def main():
                             else:
                                 # Only proceed with extraction if API key is configured
                                 if not MOCK_MODE and AZURE_API_KEY:
-                                    extractor = StableChunkedDocumentFormulaExtractor(target_outputs=st.session_state.selected_output_variables)
-                                    extraction_result = extractor.extract_formulas_from_document(text)
+                                    # Generate file hash for caching
+                                    file_hash = get_file_hash(file_bytes)
+                                    target_key = "_".join(sorted(st.session_state.selected_output_variables))
+                                    cache_key = f"{file_hash}_{target_key}"
+                                    
+                                    try:
+                                        # Try cached extraction (silent)
+                                        result_dict = extract_formulas_cached(
+                                            file_hash=cache_key,
+                                            text=text,
+                                            target_outputs=st.session_state.selected_output_variables,
+                                            chunk_size=STABLE_CHUNK_CONFIG['chunk_size'],
+                                            chunk_overlap=STABLE_CHUNK_CONFIG['chunk_overlap']
+                                        )
+                                        
+                                        # Convert back to DocumentExtractionResult
+                                        extracted_formulas = [
+                                            ExtractedFormula(
+                                                formula_name=f['formula_name'],
+                                                formula_expression=f['formula_expression'],
+                                                variants_info=f['variants_info'],
+                                                business_context=f['business_context'],
+                                                confidence=f['confidence'],
+                                                source_method=f['source_method'],
+                                                document_evidence=f['document_evidence'],
+                                                specific_variables=f['specific_variables']
+                                            )
+                                            for f in result_dict['extracted_formulas']
+                                        ]
+                                        
+                                        extraction_result = DocumentExtractionResult(
+                                            input_variables=result_dict['input_variables'],
+                                            basic_derived_formulas=result_dict['basic_derived_formulas'],
+                                            extracted_formulas=extracted_formulas,
+                                            extraction_summary=result_dict['extraction_summary'],
+                                            overall_confidence=result_dict['overall_confidence']
+                                        )
+                                        
+                                    except:
+                                        # Silently fall back to fresh extraction
+                                        extractor = StableChunkedDocumentFormulaExtractor(
+                                            target_outputs=st.session_state.selected_output_variables
+                                        )
+                                        extraction_result = extractor.extract_formulas_from_document(text)
                                                             
                                     st.session_state.extraction_result = extraction_result
                                     # Convert to editable format
@@ -1647,6 +1738,15 @@ def main():
                     mime="text/csv",
                     help="Export a summarized table of formulas in CSV format."
                 )
+            st.markdown("---")
+            st.subheader("Next Steps")
+            st.markdown("Once you're satisfied with the extracted formulas, proceed to map variables to your data.")
+            if st.button("➡️ Proceed to Variable Mapping & Calculation", type="primary", key="proceed_to_calc"):
+            
+                st.session_state.formulas = st.session_state.formulas
+                st.session_state.formulas_saved = True
+                st.switch_page("pages/2_calculation_page.py")
+
         else:
             st.warning("No formulas were extracted based on your selections and the document content. Try selecting more general terms or ensuring your API key is set.")
 

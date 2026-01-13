@@ -52,7 +52,7 @@ def load_embedding_model():
     try:
         import ssl
         import certifi
-        
+        os.environ["SSL_CERT_FILE"]=certifi.where()
         # Create SSL context that uses certifi certificates
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         
@@ -277,10 +277,9 @@ Format: SCORE: X.XX | REASON: explanation"""
             return 0.0, f"AI_error: {str(e)}"
     
     def find_best_match(self, variable: str, headers: List[str], use_vector: bool = True, use_ai: bool = False) -> Optional[VariableMapping]:
-        """Find the best matching header for a variable using progressive matching strategies"""
         best_score = 0.0
         best_header = None
-        best_method = None
+        best_method = "no_match"
         
         # Stage 1: Lexical matching (fastest, cheapest)
         for header in headers:
@@ -291,45 +290,23 @@ Format: SCORE: X.XX | REASON: explanation"""
                 best_header = header
                 best_method = "lexical"
         
-        # If lexical match is very high, skip other methods
-        if best_score >= 0.95:
-            return VariableMapping(
-                variable_name=variable,
-                mapped_header=best_header,
-                confidence_score=best_score,
-                matching_method=best_method,
-                is_verified=True
-            )
+        # REMOVED EARLY RETURN: Continue to check Fuzzy even if Lexical was high
         
-        # Stage 2: Fuzzy matching (still fast and free)
-        fuzzy_best_score = 0.0
-        fuzzy_best_header = None
-        
+        # Stage 2: Fuzzy matching
         for header in headers:
             fuzzy_score = self.fuzzy_similarity(variable, header)
             
-            if fuzzy_score > fuzzy_best_score:
-                fuzzy_best_score = fuzzy_score
-                fuzzy_best_header = header
+            if fuzzy_score > best_score:
+                best_score = fuzzy_score
+                best_header = header
+                best_method = "fuzzy"
         
-        # Update if fuzzy is better
-        if fuzzy_best_score > best_score:
-            best_score = fuzzy_best_score
-            best_header = fuzzy_best_header
-            best_method = "fuzzy"
-        
-        # If fuzzy match is very high, skip other methods
-        if best_score >= 0.90:
-            return VariableMapping(
-                variable_name=variable,
-                mapped_header=best_header,
-                confidence_score=best_score,
-                matching_method=best_method,
-                is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
-            )
+        # REMOVED EARLY RETURN: Continue to check Vector even if Fuzzy was high
         
         # Stage 3: Vector embeddings (moderate cost, good accuracy)
-        if use_vector and best_score < 0.85:
+        # We only run this if enabled or if the current best score is reasonably low (optimization)
+        # But since you asked to NOT skip levels, we remove the score check here.
+        if use_vector:
             vector_best_score = 0.0
             vector_best_header = None
             vector_method = None
@@ -342,28 +319,23 @@ Format: SCORE: X.XX | REASON: explanation"""
                     vector_best_header = header
                     vector_method = method
             
-            # Update if vector is better
+            # Update if vector is better than the current best
             if vector_best_score > best_score:
                 best_score = vector_best_score
                 best_header = vector_best_header
                 best_method = vector_method
         
-        # If vector match is very high, skip AI
-        if best_score >= 0.85:
-            return VariableMapping(
-                variable_name=variable,
-                mapped_header=best_header,
-                confidence_score=best_score,
-                matching_method=best_method,
-                is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
-            )
+        # REMOVED EARLY RETURN: Continue to check AI
         
-        # Stage 4: AI semantic matching (LAST RESORT - expensive, slow)
-        if use_ai and best_score < 0.80 and best_header:
+        # Stage 4: AI semantic matching (LAST RESORT)
+        if use_ai and best_header:
+            # We only call AI if we have a candidate (best_header) to compare against
+            # Note: AI is expensive, so usually we only do this if best_score is low, 
+            # but to run ALL levels, we proceed here.
             ai_score, ai_method = self.semantic_similarity_ai(variable, best_header)
             
-            # Only use AI if it significantly improves confidence
-            if ai_score > best_score + 0.1:
+            # Only use AI if it improves the score
+            if ai_score > best_score:
                 best_score = ai_score
                 best_method = ai_method
         
@@ -416,20 +388,26 @@ def extract_variables_from_formulas(formulas: List[Dict]) -> Set[str]:
     """Extract all unique variables from formula expressions"""
     variables = set()
     
-    # Common variable patterns in formulas
-    var_pattern = r'\b([A-Z][A-Z0-9_]*)\b'
+    # Updated Regex: [a-zA-Z] allows variables to start with lowercase OR uppercase
+    var_pattern = r'\b([a-zA-Z][a-zA-Z0-9_]*)\b'
     
     for formula in formulas:
         expr = formula.get('formula_expression', '')
         matches = re.findall(var_pattern, expr)
         variables.update(matches)
     
-    # Filter out common operators and keywords
-    operators = {'MAX', 'MIN', 'SUM', 'AVG', 'IF', 'THEN', 'ELSE', 'AND', 'OR', 'NOT'}
-    variables = {v for v in variables if v not in operators}
+    # Expanded filter list to include common Excel/Logic functions so they aren't treated as variables
+    operators = {
+        'MAX', 'MIN', 'SUM', 'AVG', 'IF', 'THEN', 'ELSE', 'AND', 'OR', 'NOT',
+        'ROUND', 'CEILING', 'FLOOR', 'ABS', 'POWER', 'SQRT', 'MOD', 'INT',
+        'COUNT', 'VLOOKUP', 'INDEX', 'MATCH', 'ISERROR', 'ISBLANK',
+        'TRUE', 'FALSE', 'NA', 'PI'
+    }
+    
+    # Also filter out variables that are purely numbers (unlikely with this regex but safe practice)
+    variables = {v for v in variables if v not in operators and not v.isdigit()}
     
     return variables
-
 
 def load_excel_file(file_bytes, file_extension: str) -> Tuple[pd.DataFrame, List[str]]:
     """Load Excel file and extract headers"""
