@@ -1739,13 +1739,12 @@ def main():
                     help="Export a summarized table of formulas in CSV format."
                 )
             st.markdown("---")
-            st.subheader("Next Steps")
-            st.markdown("Once you're satisfied with the extracted formulas, proceed to map variables to your data.")
-            if st.button("➡️ Proceed to Variable Mapping & Calculation", type="primary", key="proceed_to_calc"):
-            
-                st.session_state.formulas = st.session_state.formulas
-                st.session_state.formulas_saved = True
-                st.switch_page("pages/2_calculation_page.py")
+            st.page_link(
+                "pages/2_calculation_page.py",
+                label="➡️ Proceed to Calculations",
+                use_container_width=True
+            )
+
 
         else:
             st.warning("No formulas were extracted based on your selections and the document content. Try selecting more general terms or ensuring your API key is set.")
