@@ -56,6 +56,7 @@ class VariableMapping:
     confidence_score: float
     matching_method: str
     is_verified: bool = False
+    variable_type: str = "output"  # Add this line
     
     def to_dict(self):
         return asdict(self)
@@ -443,7 +444,168 @@ def apply_mappings_to_formulas(formulas: List[Dict], mappings: Dict[str, Variabl
         })
     
     return mapped_formulas
+def show_calculation_engine():
+    """Display calculation engine interface"""
+    st.subheader("🧮 Calculation Engine")
+    st.markdown("Apply formulas to your data row-by-row and generate calculated results.")
+    
+    # Option to reupload or use existing
+    col_file1, col_file2 = st.columns([2, 1])
+    
+    with col_file1:
+        use_existing = st.checkbox("Use previously uploaded Excel file", value=True)
+    
+    calc_df = None
+    
+    if not use_existing:
+        st.markdown("### Upload New Excel File")
+        uploaded_calc_file = st.file_uploader(
+            "Upload Excel/CSV for calculations",
+            type=list(ALLOWED_EXCEL_EXTENSIONS),
+            key="calc_excel_uploader"
+        )
+        
+        if uploaded_calc_file:
+            file_extension = Path(uploaded_calc_file.name).suffix.lower()
+            calc_df, calc_headers = load_excel_file(uploaded_calc_file.read(), file_extension)
+            
+            if calc_df is not None:
+                st.success(f"✅ Loaded {len(calc_df)} rows")
+                
+                # Verify headers match mappings
+                mapped_headers = set(st.session_state.header_to_var_mapping.keys())
+                file_headers = set(calc_headers)
+                
+                if not mapped_headers.issubset(file_headers):
+                    missing = mapped_headers - file_headers
+                    st.error(f"❌ Missing headers in new file: {', '.join(list(missing)[:5])}")
+                    calc_df = None
+    else:
+        calc_df = st.session_state.excel_df
+        st.info(f"Using existing file with {len(calc_df)} rows")
+    
+    if calc_df is not None:
+        # Show preview
+        with st.expander("📊 Data Preview"):
+            st.dataframe(calc_df.head(), use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Select output columns
+        st.markdown("### Select Output Columns to Populate")
+        st.markdown("Choose which columns should be filled with formula results")
+        
+        available_cols = calc_df.columns.tolist()
+        selected_output_cols = st.multiselect(
+            "Output Columns",
+            options=available_cols,
+            help="Select columns where formula results will be written"
+        )
+        
+        if selected_output_cols:
+            st.info(f"Selected {len(selected_output_cols)} output column(s)")
+        
+        st.markdown("---")
+        
+        # Run calculations button
+        col_btn1, col_btn2 = st.columns([1, 3])
+        
+        with col_btn1:
+            if st.button("▶️ Run Calculations", type="primary", disabled=not selected_output_cols):
+                with st.spinner("Calculating..."):
+                    # Import calculation engine
+                    from calculation_engine import run_calculations
+                    
+                    # Run calculations
+                    result_df, calc_results = run_calculations(
+                        calc_df,
+                        st.session_state.formulas,
+                        st.session_state.variable_mappings,
+                        selected_output_cols
+                    )
+                    
+                    # Store results
+                    st.session_state.results_df = result_df
+                    st.session_state.calc_results = calc_results
+                    st.session_state.calculation_complete = True
+                    
+                    st.success("✅ Calculations complete!")
+                    st.rerun()
 
+
+def show_calculation_results():
+    """Display calculation results"""
+    st.subheader("✅ Calculation Results")
+    
+    # Summary statistics
+    st.markdown("### Summary")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    total_rows = len(st.session_state.results_df)
+    total_formulas = len(st.session_state.calc_results)
+    
+    avg_success = sum(r.success_rate for r in st.session_state.calc_results) / total_formulas if total_formulas > 0 else 0
+    
+    with col1:
+        st.metric("Total Rows", total_rows)
+    with col2:
+        st.metric("Formulas Applied", total_formulas)
+    with col3:
+        st.metric("Avg Success Rate", f"{avg_success:.1f}%")
+    
+    # Show detailed results
+    st.markdown("---")
+    st.markdown("### Formula Results")
+    
+    for calc_result in st.session_state.calc_results:
+        with st.expander(f"**{calc_result.formula_name}** - {calc_result.success_rate:.1f}% success"):
+            st.markdown(f"**Rows Calculated:** {calc_result.rows_calculated} / {total_rows}")
+            
+            if calc_result.errors:
+                st.markdown("**Errors:**")
+                for error in calc_result.errors:
+                    st.error(error)
+    
+    # Show results dataframe
+    st.markdown("---")
+    st.markdown("### Results Data")
+    st.dataframe(st.session_state.results_df, use_container_width=True)
+    
+    # Export options
+    st.markdown("---")
+    col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 2])
+    
+    with col_exp1:
+        # Export to Excel
+        from io import BytesIO
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            st.session_state.results_df.to_excel(writer, index=False, sheet_name='Results')
+        
+        st.download_button(
+            label="📥 Download Excel",
+            data=output.getvalue(),
+            file_name="calculation_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    
+    with col_exp2:
+        # Export to CSV
+        csv_data = st.session_state.results_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download CSV",
+            data=csv_data,
+            file_name="calculation_results.csv",
+            mime="text/csv"
+        )
+    
+    with col_exp3:
+        if st.button("🔄 Start New Calculation"):
+            st.session_state.calculation_complete = False
+            st.session_state.results_df = None
+            st.session_state.calc_results = None
+            st.rerun()
 
 def set_custom_css():
     """Apply custom CSS"""
@@ -596,7 +758,25 @@ def main():
     
     if 'header_to_var_mapping' not in st.session_state:
         st.session_state.header_to_var_mapping = {}
+    if 'calculation_complete' not in st.session_state:
+        st.session_state.calculation_complete = False
+
+    if 'results_df' not in st.session_state:
+        st.session_state.results_df = None
+
+    if 'calc_results' not in st.session_state:
+        st.session_state.calc_results = None
     
+    # Check if we're in calculation results mode
+    if st.session_state.mapping_complete and st.session_state.calculation_complete:
+        show_calculation_results()
+        return
+
+    # Check if we're ready for calculations
+    if st.session_state.mapping_complete:
+        show_calculation_engine()
+        return
+
     # Check if formulas exist
     if not st.session_state.formulas:
         st.error("❌ No formulas found in session.")
@@ -738,23 +918,40 @@ def main():
                                 use_ai=False  # No AI in initial pass
                             )
                             
-                            # Store mappings for all variables (output variables in variable_mappings)
-                            st.session_state.variable_mappings = {
-                                var: mappings[var] for var in mappings if var in all_variables
-                            }
-                            
-                            # Store mappings for input/derived in header_to_var_mapping
-                            if 'header_to_var_mapping' not in st.session_state:
-                                st.session_state.header_to_var_mapping = {}
-                            
+                            # Build a complete variable type dict
+                            all_var_types = {}
+                            for var in all_variables:
+                                all_var_types[var] = 'output'
+                            for var in INPUT_VARIABLES.keys():
+                                all_var_types[var] = 'input'
+                            for var in DERIVED_VARIABLES.keys():
+                                all_var_types[var] = 'derived'
+
+                            # Pass this to the matcher
+                            matcher = VariableHeaderMatcher()
+                            mappings = matcher.match_all_variables(
+                                combined_variables,
+                                headers,
+                                all_variables=all_var_types,  # Pass the type dict
+                                use_ai=False
+                            )
+
+                            # Store ALL mappings properly
+                            st.session_state.variable_mappings = {}
+                            st.session_state.header_to_var_mapping = {}
+
                             for var_name, mapping in mappings.items():
+                                var_type = all_var_types.get(var_name, 'output')
+                                
+                                # Update mapping with correct type
+                                mapping.variable_type = var_type
+                                
+                                # Store in variable_mappings
+                                st.session_state.variable_mappings[var_name] = mapping
+                                
+                                # Store in header_to_var_mapping if mapped
                                 if mapping.mapped_header:
-                                    if var_name in INPUT_VARIABLES:
-                                        st.session_state.header_to_var_mapping[mapping.mapped_header] = f"[INPUT] {var_name}"
-                                    elif var_name in DERIVED_VARIABLES:
-                                        st.session_state.header_to_var_mapping[mapping.mapped_header] = f"[DERIVED] {var_name}"
-                                    elif var_name in all_variables:
-                                        st.session_state.header_to_var_mapping[mapping.mapped_header] = f"[OUTPUT] {var_name}"
+                                    st.session_state.header_to_var_mapping[mapping.mapped_header] = f"[{var_type.upper()}] {var_name}"
                             
                             st.session_state.initial_mapping_done = True
                             
@@ -929,17 +1126,24 @@ def main():
                 all_vars_with_types[f"[DERIVED] {var}"] = "derived"
             
             # Create display names without prefixes
+            # Create display names without type tags - just variable names
             dropdown_display = ["(Unmapped)"]
             dropdown_to_full = {"(Unmapped)": "(Unmapped)"}
             for var_full in sorted(all_vars_with_types.keys()):
                 var_clean = var_full.split("] ", 1)[1] if "] " in var_full else var_full
-                var_type = all_vars_with_types[var_full]
-                display_name = f"{var_clean} ({var_type})"
-                dropdown_display.append(display_name)
-                dropdown_to_full[display_name] = var_full
-            
-            dropdown_options = dropdown_display
-            
+                # Just use the clean variable name without type
+                dropdown_display.append(var_clean)
+                dropdown_to_full[var_clean] = var_full
+
+            # Remove duplicates while preserving order
+            seen = set()
+            dropdown_display_unique = []
+            for item in dropdown_display:
+                if item not in seen:
+                    seen.add(item)
+                    dropdown_display_unique.append(item)
+            dropdown_display = dropdown_display_unique
+                        
             # Initialize header_to_var_mapping in session state
             if 'header_to_var_mapping' not in st.session_state:
                 st.session_state.header_to_var_mapping = {}
@@ -1336,7 +1540,8 @@ def main():
         
         with col_exp3:
             if st.button("➡️ Proceed to Calculations", type="primary"):
-                st.info("Calculation engine coming soon!")
+                st.session_state.mapping_complete = True
+                st.rerun()
     
     # Footer
     st.markdown("---")
