@@ -1192,12 +1192,12 @@ def main():
                             current_display = display
                             break
                     
-                    if current_display in dropdown_options:
-                        current_index = dropdown_options.index(current_display)
-                    
+                    if current_display in dropdown_display:
+                        current_index = dropdown_display.index(current_display)
+
                     selected_var = st.selectbox(
                         "Variable",
-                        options=dropdown_options,
+                        options=dropdown_display,
                         index=current_index,
                         key=f"map_header_{header}",
                         label_visibility="collapsed"
