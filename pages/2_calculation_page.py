@@ -823,9 +823,40 @@ def main():
     st.markdown("---")
     
     # Initialize session state
-    if 'formulas' not in st.session_state or not st.session_state.formulas:
-        st.error("❌ No formulas found. Please go back to the extraction page and extract formulas first.")
-        st.info("💡 Use the sidebar navigation to return to the main page.")
+    # Initialize session state
+    if 'formulas' not in st.session_state:
+        st.session_state.formulas = []
+
+    if not st.session_state.formulas:
+        st.error("❌ No formulas found in session.")
+        st.warning("⚠️ **Note:** Refreshing this page will clear your session. Use the navigation menu instead of browser refresh.")
+        st.info("💡 Use the sidebar navigation to return to the main page and extract formulas again.")
+        
+        # Option to upload previously saved mappings
+        st.markdown("---")
+        st.subheader("📥 Restore Previous Session")
+        
+        col_restore1, col_restore2 = st.columns(2)
+        
+        with col_restore1:
+            st.markdown("**Upload Formulas JSON:**")
+            uploaded_json = st.file_uploader("Upload previously exported mappings JSON", type=['json'], key="restore_json")
+            if uploaded_json:
+                try:
+                    import_data = json.loads(uploaded_json.read())
+                    if 'formulas' in import_data:
+                        st.session_state.formulas = import_data['formulas']
+                        st.success("✅ Formulas restored!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid JSON format. Missing 'formulas' key.")
+                except Exception as e:
+                    st.error(f"Error loading file: {e}")
+        
+        with col_restore2:
+            st.markdown("**Or go back to extract formulas:**")
+            st.info("Use the sidebar navigation to return to the main page.")
+        
         return
     
     if 'excel_headers' not in st.session_state:
@@ -867,26 +898,7 @@ def main():
         show_calculation_engine()
         return
 
-    # Check if formulas exist
-    if not st.session_state.formulas:
-        st.error("❌ No formulas found in session.")
-        st.warning("⚠️ **Note:** Refreshing this page will clear your session. Use the navigation menu instead of browser refresh.")
-        st.info("💡 Use the sidebar navigation to return to the main page and extract formulas again.")
-        
-        # Option to upload previously saved mappings
-        st.markdown("---")
-        st.subheader("📥 Restore Previous Session")
-        uploaded_json = st.file_uploader("Upload previously exported mappings JSON", type=['json'])
-        if uploaded_json:
-            try:
-                import_data = json.loads(uploaded_json.read())
-                if 'formulas' in import_data:
-                    st.session_state.formulas = import_data['formulas']
-                    st.success("✅ Formulas restored!")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Error loading file: {e}")
-        return
+    
 
     # Main content
     col1, col2 = st.columns([1, 1])
