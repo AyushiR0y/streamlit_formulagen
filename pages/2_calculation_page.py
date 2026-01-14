@@ -815,7 +815,7 @@ def main():
             csv_data = pd.DataFrame(mapped_formulas).to_csv(index=False)
             st.download_button(
                 label="📥 Download Mapped Formulas (CSV)",
-                data=csv_data,
+                  data=csv_data,
                 file_name="mapped_formulas.csv",
                 mime="text/csv"
             )
