@@ -735,227 +735,290 @@ def main():
     # Variable Mapping Section
     if st.session_state.initial_mapping_done and st.session_state.variable_mappings:
         st.markdown("---")
-        st.subheader("🔗 Variable to Header Mappings")
-        st.markdown("Review and edit the automatically generated mappings. You can manually adjust any mapping.")
+        st.subheader("🔗 Complete Mapping Interface")
+        st.markdown("Map all Excel headers to variables (output, input, or derived). Use AI assistance or manual selection.")
         
         # Create tabs for different views
-        tab1, tab2 = st.tabs(["📊 Mappings Table", "📋 All Excel Headers"])
+        tab1, tab2, tab3 = st.tabs(["📋 All Excel Headers", "📊 Variable Mappings", "📐 Input & Derived Variables"])
         
         with tab1:
-            st.markdown("#### Variable Mappings")
+            st.markdown("#### Excel Headers - Map to Variables")
+            st.info("💡 For each header, select what variable it represents. You can map to output variables, input variables, or derived formulas.")
+            
+            # Prepare all available variables for mapping
+            all_available_vars = list(st.session_state.variable_mappings.keys())
+            
+            # Add input variables
+            INPUT_VARIABLES = {
+                'TERM_START_DATE': 'Date when the policy starts',
+                'FUP_Date': 'First Unpaid Premium date',
+                'ENTRY_AGE': 'Age at policy inception',
+                'TOTAL_PREMIUM': 'Annual Premium amount',
+                'BOOKING_FREQUENCY': 'Frequency of premium booking',
+                'PREMIUM_TERM': 'Premium Paying Term',
+                'SUM_ASSURED': 'Sum Assured',
+                'Income_Benefit_Amount': 'Amount of income benefit',
+                'Income_Benefit_Frequency': 'Frequency of income benefit',
+                'DATE_OF_SURRENDER': 'Date when policy is surrendered',
+                'no_of_premium_paid': 'Years since commencement till FUP',
+                'maturity_date': 'Maturity date',
+                'policy_year': 'Years since commencement + 1',
+                'BENEFIT_TERM': 'Benefit term in years',
+                'GSV_FACTOR': 'GSV Factor',
+                'SSV1_FACTOR': 'SSV1 Factor',
+                'SSV2_FACTOR': 'SSV2 Factor',
+                'SSV3_FACTOR': 'SSV3 Factor',
+                'FUND_VALUE': 'Fund value at surrender/maturity',
+                'N': 'min(Policy_term, 20) - Elapsed_policy_duration',
+                'SYSTEM_PAID': 'Amount paid by system',
+                'CAPITAL_UNITS_VALUE': 'Units in policy fund',
+            }
+            
+            DERIVED_VARIABLES = {
+                'Elapsed_policy_duration': 'Years passed since policy start',
+                'CAPITAL_FUND_VALUE': 'Total fund value with bonuses',
+                'FUND_FACTOR': 'Fund value computation factor',
+                'Final_surrender_value_paid': 'Final surrender value',
+            }
+            
+            # Combine all for dropdown
+            all_vars_with_types = {}
+            for var in all_available_vars:
+                all_vars_with_types[f"[OUTPUT] {var}"] = "output"
+            for var, desc in INPUT_VARIABLES.items():
+                all_vars_with_types[f"[INPUT] {var}"] = "input"
+            for var, desc in DERIVED_VARIABLES.items():
+                all_vars_with_types[f"[DERIVED] {var}"] = "derived"
+            
+            # Initialize header_to_var_mapping in session state
+            if 'header_to_var_mapping' not in st.session_state:
+                st.session_state.header_to_var_mapping = {}
+                # Pre-populate from existing mappings
+                for var_name, mapping in st.session_state.variable_mappings.items():
+                    if mapping.mapped_header:
+                        st.session_state.header_to_var_mapping[mapping.mapped_header] = f"[OUTPUT] {var_name}"
             
             # Header row
-            col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 3, 2, 2, 2])
+            col_h1, col_h2, col_h3, col_h4 = st.columns([3, 4, 2, 1])
             with col_h1:
-                st.markdown("**Variable**")
+                st.markdown("**Excel Header**")
             with col_h2:
-                st.markdown("**Mapped Header**")
+                st.markdown("**Maps To Variable**")
             with col_h3:
-                st.markdown("**Confidence**")
+                st.markdown("**Type/Source**")
             with col_h4:
-                st.markdown("**Method**")
-            with col_h5:
-                st.markdown("**Verified**")
+                st.markdown("**Action**")
             
             st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 2px solid #004DA8;">', unsafe_allow_html=True)
             
-            # Sort mappings: unmapped first, then by confidence
-            sorted_vars = sorted(
-                st.session_state.variable_mappings.keys(),
-                key=lambda v: (
-                    1 if st.session_state.variable_mappings[v].mapped_header else 0,
-                    -st.session_state.variable_mappings[v].confidence_score
-                )
+            # Sort headers: mapped first
+            sorted_headers = sorted(
+                st.session_state.excel_headers,
+                key=lambda h: (h not in st.session_state.header_to_var_mapping, h)
             )
             
-            for var_name in sorted_vars:
-                mapping = st.session_state.variable_mappings[var_name]
-                
-                col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
+            for header in sorted_headers:
+                col1, col2, col3, col4 = st.columns([3, 4, 2, 1])
                 
                 with col1:
-                    st.markdown(f"`{var_name}`")
+                    # Show header name with status indicator
+                    is_mapped = header in st.session_state.header_to_var_mapping
+                    status_icon = "✅" if is_mapped else "⚪"
+                    st.markdown(f"{status_icon} `{header}`")
                 
                 with col2:
+                    # Dropdown for variable selection
+                    dropdown_options = ["(Unmapped)"] + sorted(all_vars_with_types.keys())
+                    current_mapping = st.session_state.header_to_var_mapping.get(header, "(Unmapped)")
                     current_index = 0
-                    dropdown_options = ["(None of the following)"] + st.session_state.excel_headers
                     
-                    if mapping.mapped_header in st.session_state.excel_headers:
-                        current_index = st.session_state.excel_headers.index(mapping.mapped_header) + 1
+                    if current_mapping in dropdown_options:
+                        current_index = dropdown_options.index(current_mapping)
                     
-                    new_header = st.selectbox(
-                        "Header",
+                    selected_var = st.selectbox(
+                        "Variable",
                         options=dropdown_options,
                         index=current_index,
-                        key=f"header_{var_name}",
+                        key=f"map_header_{header}",
                         label_visibility="collapsed"
                     )
                     
-                    # Update mapping if changed
-                    # Treat "(None of the above)" as empty
-                    if new_header == "(None of the above)":
-                        new_header = ""
-                    
-                    if new_header != mapping.mapped_header:
-                        mapping.mapped_header = new_header
-                        mapping.confidence_score = 1.0 if new_header else 0.0
-                        mapping.matching_method = "manual" if new_header else "none_selected"
-                        mapping.is_verified = True if new_header else False
+                    # Update mapping
+                    if selected_var == "(Unmapped)":
+                        if header in st.session_state.header_to_var_mapping:
+                            del st.session_state.header_to_var_mapping[header]
+                    else:
+                        st.session_state.header_to_var_mapping[header] = selected_var
                 
                 with col3:
-                    # Confidence badge
-                    if mapping.confidence_score >= CONFIDENCE_THRESHOLDS['high']:
-                        conf_class = "confidence-high"
-                        conf_label = "High"
-                    elif mapping.confidence_score >= CONFIDENCE_THRESHOLDS['medium']:
-                        conf_class = "confidence-medium"
-                        conf_label = "Medium"
-                    elif mapping.confidence_score >= CONFIDENCE_THRESHOLDS['low']:
-                        conf_class = "confidence-low"
-                        conf_label = "Low"
+                    # Show variable type and matching method
+                    if header in st.session_state.header_to_var_mapping:
+                        var_display = st.session_state.header_to_var_mapping[header]
+                        var_type = all_vars_with_types.get(var_display, "unknown")
+                        
+                        # Extract clean variable name
+                        clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
+                        
+                        # Check if this was auto-mapped
+                        if clean_var in st.session_state.variable_mappings:
+                            method = st.session_state.variable_mappings[clean_var].matching_method
+                            if method.startswith("manual"):
+                                st.markdown(f"*{var_type.upper()}* - Manual")
+                            elif method.startswith("lexical"):
+                                st.markdown(f"*{var_type.upper()}* - Auto")
+                            else:
+                                st.markdown(f"*{var_type.upper()}* - {method[:10]}")
+                        else:
+                            st.markdown(f"*{var_type.upper()}* - Manual")
                     else:
-                        conf_class = "confidence-low"
-                        conf_label = "None"
-                    
-                    st.markdown(
-                        f'<span class="{conf_class}">{conf_label} ({mapping.confidence_score:.2f})</span>',
-                        unsafe_allow_html=True
-                    )
+                        st.markdown("*-*")
                 
                 with col4:
-                    st.markdown(f"*{mapping.matching_method[:20]}...*" if len(mapping.matching_method) > 20 else f"*{mapping.matching_method}*")
-                
-                with col5:
-                    verified = st.checkbox(
-                        "Verified",
-                        value=mapping.is_verified,
-                        key=f"verify_{var_name}",
-                        label_visibility="collapsed"
-                    )
-                    mapping.is_verified = verified
+                    # Actions
+                    if header in st.session_state.header_to_var_mapping:
+                        if st.button("🗑️", key=f"delete_{header}", help="Remove mapping"):
+                            del st.session_state.header_to_var_mapping[header]
+                            st.rerun()
+                    else:
+                        if st.button("🤖", key=f"ai_{header}", help="AI suggest", disabled=MOCK_MODE):
+                            # Run AI on this specific header
+                            with st.spinner(f"AI analyzing {header}..."):
+                                matcher = VariableHeaderMatcher()
+                                
+                                # Try matching against all available variables
+                                best_match = None
+                                best_score = 0
+                                
+                                for var_display in all_vars_with_types.keys():
+                                    clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
+                                    ai_score, _ = matcher.semantic_similarity_ai(clean_var, header)
+                                    if ai_score > best_score:
+                                        best_score = ai_score
+                                        best_match = var_display
+                                
+                                if best_match and best_score >= CONFIDENCE_THRESHOLDS['low']:
+                                    st.session_state.header_to_var_mapping[header] = best_match
+                                    st.success(f"Mapped to {best_match} (confidence: {best_score:.2f})")
+                                    st.rerun()
+                                else:
+                                    st.warning("No good match found")
                 
                 st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
+            
+            # Summary stats
+            mapped_count = len(st.session_state.header_to_var_mapping)
+            total_headers = len(st.session_state.excel_headers)
+            
+            col_stat1, col_stat2 = st.columns(2)
+            with col_stat1:
+                st.metric("Total Headers", total_headers)
+            with col_stat2:
+                st.metric("Mapped Headers", mapped_count)
         
         with tab2:
-            st.markdown("#### All Excel Headers (Mapped & Unmapped)")
+            st.markdown("#### Variable Mappings Overview")
             
-            # Get mapped headers
-            mapped_headers = {m.mapped_header for m in st.session_state.variable_mappings.values() if m.mapped_header}
+            # Reverse mapping: variable -> headers
+            var_to_headers = {}
+            for header, var_display in st.session_state.header_to_var_mapping.items():
+                clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
+                if clean_var not in var_to_headers:
+                    var_to_headers[clean_var] = []
+                var_to_headers[clean_var].append(header)
             
-            # Show all headers with status
-            headers_df_data = []
-            for header in st.session_state.excel_headers:
-                if header in mapped_headers:
-                    # Find which variable(s) map to this header
-                    vars_mapped = [v for v, m in st.session_state.variable_mappings.items() if m.mapped_header == header]
-                    status = f"Mapped to: {', '.join(vars_mapped)}"
-                    status_class = "✅"
-                else:
-                    status = "Not mapped to any variable"
-                    status_class = "⚪"
-                
-                headers_df_data.append({
-                    "Status": status_class,
-                    "Header Name": header,
-                    "Mapping Info": status
-                })
+            # Display mappings grouped by variable
+            for var_name in sorted(var_to_headers.keys()):
+                headers = var_to_headers[var_name]
+                with st.expander(f"**{var_name}** → {len(headers)} header(s)", expanded=False):
+                    for h in headers:
+                        st.markdown(f"- `{h}`")
             
-            headers_df = pd.DataFrame(headers_df_data)
-            st.dataframe(headers_df, use_container_width=True, hide_index=True)
+            # Show unmapped variables
+            unmapped_vars = [v for v in all_available_vars if v not in var_to_headers]
+            if unmapped_vars:
+                st.warning(f"⚠️ {len(unmapped_vars)} output variables not yet mapped to any header")
+                with st.expander("View Unmapped Variables", expanded=False):
+                    for v in unmapped_vars:
+                        st.markdown(f"- `{v}`")
+        
+        with tab3:
+            st.markdown("#### Input & Derived Variables Reference")
             
-            unmapped_count = len([h for h in st.session_state.excel_headers if h not in mapped_headers])
-            st.info(f"📊 **{unmapped_count}** out of **{len(st.session_state.excel_headers)}** headers are currently unmapped")
+            col_ref1, col_ref2 = st.columns(2)
+            
+            with col_ref1:
+                st.markdown("**Input Variables**")
+                for var, desc in INPUT_VARIABLES.items():
+                    with st.expander(f"`{var}`", expanded=False):
+                        st.markdown(f"**Description:** {desc}")
+                        # Check if mapped
+                        mapped_headers = [h for h, v in st.session_state.header_to_var_mapping.items() 
+                                        if v == f"[INPUT] {var}"]
+                        if mapped_headers:
+                            st.success(f"✅ Mapped to: {', '.join(mapped_headers)}")
+                        else:
+                            st.info("Not yet mapped")
+            
+            with col_ref2:
+                st.markdown("**Derived Variables**")
+                for var, desc in DERIVED_VARIABLES.items():
+                    with st.expander(f"`{var}`", expanded=False):
+                        st.markdown(f"**Description:** {desc}")
+                        # Check if mapped
+                        mapped_headers = [h for h, v in st.session_state.header_to_var_mapping.items() 
+                                        if v == f"[DERIVED] {var}"]
+                        if mapped_headers:
+                            st.success(f"✅ Mapped to: {', '.join(mapped_headers)}")
+                        else:
+                            st.info("Not yet mapped")
         
         # Summary statistics
         st.markdown("---")
         col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
         
-        total_vars = len(st.session_state.variable_mappings)
-        mapped_vars = len([m for m in st.session_state.variable_mappings.values() if m.mapped_header])
-        verified_vars = len([m for m in st.session_state.variable_mappings.values() if m.is_verified])
-        high_conf_vars = len([m for m in st.session_state.variable_mappings.values() if m.confidence_score >= CONFIDENCE_THRESHOLDS['high']])
+        total_headers = len(st.session_state.excel_headers)
+        mapped_headers = len(st.session_state.header_to_var_mapping)
+        output_vars_mapped = len([v for v, m in st.session_state.variable_mappings.items() if m.mapped_header])
+        total_output_vars = len(st.session_state.variable_mappings)
         
         with col_stat1:
-            st.metric("Total Variables", total_vars)
+            st.metric("Total Headers", total_headers)
         with col_stat2:
-            st.metric("Mapped", mapped_vars)
+            st.metric("Mapped Headers", mapped_headers)
         with col_stat3:
-            st.metric("Verified", verified_vars)
+            st.metric("Output Vars Mapped", f"{output_vars_mapped}/{total_output_vars}")
         with col_stat4:
-            st.metric("High Confidence", high_conf_vars)
-        
-        # AI Enhancement Section
-        st.markdown("---")
-        st.subheader("🤖 AI-Powered Enhancement (Optional)")
-        
-        # Get variables that selected "None of the above"
-        none_selected_vars = [v for v, m in st.session_state.variable_mappings.items() 
-                             if not m.mapped_header and m.matching_method == "none_selected"]
-        unmapped_vars = [v for v, m in st.session_state.variable_mappings.items() 
-                        if not m.mapped_header and m.matching_method != "none_selected"]
-        low_conf_vars = [v for v, m in st.session_state.variable_mappings.items() 
-                        if m.mapped_header and m.confidence_score < CONFIDENCE_THRESHOLDS['medium']]
-        
-        if none_selected_vars:
-            st.info(f"ℹ️ {len(none_selected_vars)} variable(s) marked as 'None of the above' - AI will attempt to find mappings for these")
-        
-        if unmapped_vars or low_conf_vars or none_selected_vars:
-            if unmapped_vars or low_conf_vars:
-                st.warning(f"⚠️ Found {len(unmapped_vars)} unmapped and {len(low_conf_vars)} low-confidence mappings")
-            
-            st.markdown("**Use AI to improve these mappings:**")
-            
-            col_ai1, col_ai2, col_ai3 = st.columns([1, 1, 1])
-            
-            with col_ai1:
-                if st.button("🤖 AI for Unmapped", type="secondary", disabled=MOCK_MODE or not unmapped_vars):
-                    with st.spinner("Running AI semantic matching on unmapped variables..."):
-                        matcher = VariableHeaderMatcher()
-                        for var in unmapped_vars:
-                            improved_mapping = matcher.find_best_match(var, st.session_state.excel_headers, use_ai=True)
-                            if improved_mapping and improved_mapping.confidence_score > st.session_state.variable_mappings[var].confidence_score:
-                                st.session_state.variable_mappings[var] = improved_mapping
-                        
-                        st.success("✅ AI matching complete!")
-                        st.rerun()
-            
-            with col_ai2:
-                if st.button("🤖 AI for Low Confidence", type="secondary", disabled=MOCK_MODE or not low_conf_vars):
-                    with st.spinner("Running AI semantic matching on low confidence mappings..."):
-                        matcher = VariableHeaderMatcher()
-                        for var in low_conf_vars:
-                            improved_mapping = matcher.find_best_match(var, st.session_state.excel_headers, use_ai=True)
-                            if improved_mapping and improved_mapping.confidence_score > st.session_state.variable_mappings[var].confidence_score:
-                                st.session_state.variable_mappings[var] = improved_mapping
-                        
-                        st.success("✅ AI matching complete!")
-                        st.rerun()
-            
-            with col_ai3:
-                if st.button("🤖 AI for 'None of above'", type="secondary", disabled=MOCK_MODE or not none_selected_vars):
-                    with st.spinner("Running AI semantic matching on 'None of the above' variables..."):
-                        matcher = VariableHeaderMatcher()
-                        for var in none_selected_vars:
-                            improved_mapping = matcher.find_best_match(var, st.session_state.excel_headers, use_ai=True)
-                            if improved_mapping and improved_mapping.confidence_score > st.session_state.variable_mappings[var].confidence_score:
-                                st.session_state.variable_mappings[var] = improved_mapping
-                        
-                        st.success("✅ AI matching complete!")
-                        st.rerun()
-        else:
-            st.success("✅ All variables are mapped with good confidence!")
+            completion = int((mapped_headers / total_headers) * 100) if total_headers > 0 else 0
+            st.metric("Completion", f"{completion}%")
         
         # Proceed button
         st.markdown("---")
-        col_btn1, col_btn2 = st.columns([1, 1])
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
         
         with col_btn1:
             if st.button("✅ Confirm Mappings & View Formulas", type="primary"):
-                # Check if all variables are mapped
+                # Sync header_to_var_mapping back to variable_mappings
+                # Clear existing mappings
+                for var_name in st.session_state.variable_mappings:
+                    st.session_state.variable_mappings[var_name].mapped_header = ""
+                    st.session_state.variable_mappings[var_name].is_verified = False
+                
+                # Update from header_to_var_mapping
+                for header, var_display in st.session_state.header_to_var_mapping.items():
+                    # Extract clean variable name
+                    clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
+                    
+                    # Update if it's an output variable
+                    if clean_var in st.session_state.variable_mappings:
+                        st.session_state.variable_mappings[clean_var].mapped_header = header
+                        st.session_state.variable_mappings[clean_var].is_verified = True
+                        st.session_state.variable_mappings[clean_var].matching_method = "manual_updated"
+                
+                # Check unmapped output variables
                 unmapped = [v for v, m in st.session_state.variable_mappings.items() if not m.mapped_header]
                 
                 if unmapped:
-                    st.warning(f"⚠️ {len(unmapped)} variables are still unmapped: {', '.join(unmapped[:5])}{'...' if len(unmapped) > 5 else ''}")
+                    st.warning(f"⚠️ {len(unmapped)} output variables not mapped: {', '.join(unmapped[:5])}{'...' if len(unmapped) > 5 else ''}")
                     st.info("You can proceed anyway, but unmapped variables won't be replaced in formulas.")
                 
                 st.session_state.mapping_complete = True
@@ -963,23 +1026,66 @@ def main():
                 st.rerun()
         
         with col_btn2:
-            # Export mappings
+            # Export all mappings
             mapping_export = {
-                var: {
-                    'mapped_header': m.mapped_header,
-                    'confidence': m.confidence_score,
-                    'method': m.matching_method,
-                    'verified': m.is_verified
+                'header_to_variable': st.session_state.header_to_var_mapping,
+                'variable_mappings': {
+                    var: {
+                        'mapped_header': m.mapped_header,
+                        'confidence': m.confidence_score,
+                        'method': m.matching_method,
+                        'verified': m.is_verified
+                    }
+                    for var, m in st.session_state.variable_mappings.items()
                 }
-                for var, m in st.session_state.variable_mappings.items()
             }
             
             st.download_button(
-                label="📥 Export Mappings",
+                label="📥 Export All Mappings",
                 data=json.dumps(mapping_export, indent=2),
-                file_name="variable_mappings.json",
+                file_name="complete_mappings.json",
                 mime="application/json"
             )
+        
+        with col_btn3:
+            # Bulk AI mapping for unmapped headers
+            unmapped_headers = [h for h in st.session_state.excel_headers 
+                              if h not in st.session_state.header_to_var_mapping]
+            
+            if st.button("🤖 AI Map All Unmapped", disabled=MOCK_MODE or not unmapped_headers):
+                with st.spinner(f"Running AI on {len(unmapped_headers)} unmapped headers..."):
+                    matcher = VariableHeaderMatcher()
+                    
+                    # Prepare all available variables
+                    all_vars_for_ai = {}
+                    for var in st.session_state.variable_mappings.keys():
+                        all_vars_for_ai[f"[OUTPUT] {var}"] = var
+                    
+                    INPUT_VARS = ['TERM_START_DATE', 'FUP_Date', 'ENTRY_AGE', 'TOTAL_PREMIUM', 
+                                 'BOOKING_FREQUENCY', 'PREMIUM_TERM', 'SUM_ASSURED']
+                    for var in INPUT_VARS:
+                        all_vars_for_ai[f"[INPUT] {var}"] = var
+                    
+                    progress = st.progress(0)
+                    for idx, header in enumerate(unmapped_headers):
+                        best_match = None
+                        best_score = 0
+                        
+                        for var_display, clean_var in all_vars_for_ai.items():
+                            ai_score, _ = matcher.semantic_similarity_ai(clean_var, header)
+                            if ai_score > best_score:
+                                best_score = ai_score
+                                best_match = var_display
+                        
+                        if best_match and best_score >= CONFIDENCE_THRESHOLDS['medium']:
+                            st.session_state.header_to_var_mapping[header] = best_match
+                        
+                        progress.progress((idx + 1) / len(unmapped_headers))
+                    
+                    progress.empty()
+                    st.success(f"✅ AI mapping complete!")
+                    st.rerun()
+            
     
     # Show mapped formulas
     if st.session_state.mapping_complete:
