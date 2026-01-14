@@ -1011,7 +1011,7 @@ def main():
             with col_stat3:
                 st.metric("Completion", f"{completion}%")
         
-        with tab3:
+        with tab2:
             st.markdown("#### Input & Derived Variables Reference")
             
             # Define variables here to avoid scope issues
@@ -1160,43 +1160,79 @@ def main():
             )
         
         with col_btn3:
-            # Selective AI mapping
-            unmapped_headers = [h for h in st.session_state.excel_headers 
-                              if h not in st.session_state.header_to_var_mapping]
-            
-            if unmapped_headers:
-                with st.expander("🤖 AI Map Selected Headers", expanded=False):
-                    selected_headers = st.multiselect(
-                        "Choose headers to AI map:",
-                        options=unmapped_headers,
-                        default=unmapped_headers[:5] if len(unmapped_headers) <= 5 else []
-                    )
-                    
-                    if st.button("Run AI Mapping", disabled=MOCK_MODE or not selected_headers):
-                        with st.spinner(f"Running AI on {len(selected_headers)} headers..."):
-                            matcher = VariableHeaderMatcher()
+            # Bulk AI mapping for unmapped headers
+            if st.button("🤖 AI Map All Unmapped", disabled=MOCK_MODE):
+                unmapped_headers = [h for h in st.session_state.excel_headers 
+                                  if h not in st.session_state.header_to_var_mapping]
+                
+                if unmapped_headers:
+                    with st.spinner(f"Running AI on {len(unmapped_headers)} unmapped headers..."):
+                        # Need to recreate all_vars_with_types here
+                        INPUT_VARIABLES = {
+                            'TERM_START_DATE': 'Date when the policy starts',
+                            'FUP_Date': 'First Unpaid Premium date',
+                            'ENTRY_AGE': 'Age at policy inception',
+                            'TOTAL_PREMIUM': 'Annual Premium amount',
+                            'BOOKING_FREQUENCY': 'Frequency of premium booking',
+                            'PREMIUM_TERM': 'Premium Paying Term',
+                            'SUM_ASSURED': 'Sum Assured',
+                            'Income_Benefit_Amount': 'Amount of income benefit',
+                            'Income_Benefit_Frequency': 'Frequency of income benefit',
+                            'DATE_OF_SURRENDER': 'Date when policy is surrendered',
+                            'no_of_premium_paid': 'Years since commencement till FUP',
+                            'maturity_date': 'Maturity date',
+                            'policy_year': 'Years since commencement + 1',
+                            'BENEFIT_TERM': 'Benefit term in years',
+                            'GSV_FACTOR': 'GSV Factor',
+                            'SSV1_FACTOR': 'SSV1 Factor',
+                            'SSV2_FACTOR': 'SSV2 Factor',
+                            'SSV3_FACTOR': 'SSV3 Factor',
+                            'FUND_VALUE': 'Fund value at surrender/maturity',
+                            'N': 'min(Policy_term, 20) - Elapsed_policy_duration',
+                            'SYSTEM_PAID': 'Amount paid by system',
+                            'CAPITAL_UNITS_VALUE': 'Units in policy fund',
+                        }
+                        
+                        DERIVED_VARIABLES = {
+                            'Elapsed_policy_duration': 'Years passed since policy start',
+                            'CAPITAL_FUND_VALUE': 'Total fund value with bonuses',
+                            'FUND_FACTOR': 'Fund value computation factor',
+                            'Final_surrender_value_paid': 'Final surrender value',
+                        }
+                        
+                        all_available_vars = list(st.session_state.variable_mappings.keys())
+                        all_vars_with_types_ai = {}
+                        for var in all_available_vars:
+                            all_vars_with_types_ai[f"[OUTPUT] {var}"] = "output"
+                        for var in INPUT_VARIABLES.keys():
+                            all_vars_with_types_ai[f"[INPUT] {var}"] = "input"
+                        for var in DERIVED_VARIABLES.keys():
+                            all_vars_with_types_ai[f"[DERIVED] {var}"] = "derived"
+                        
+                        matcher = VariableHeaderMatcher()
+                        progress = st.progress(0)
+                        
+                        for idx, header in enumerate(unmapped_headers):
+                            best_match = None
+                            best_score = 0
                             
-                            # Get all available variables with types
-                            progress = st.progress(0)
-                            for idx, header in enumerate(selected_headers):
-                                best_match = None
-                                best_score = 0
-                                
-                                for var_display in all_vars_with_types.keys():
-                                    clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
-                                    ai_score, _ = matcher.semantic_similarity_ai(clean_var, header)
-                                    if ai_score > best_score:
-                                        best_score = ai_score
-                                        best_match = var_display
-                                
-                                if best_match and best_score >= CONFIDENCE_THRESHOLDS['low']:
-                                    st.session_state.header_to_var_mapping[header] = best_match
-                                
-                                progress.progress((idx + 1) / len(selected_headers))
+                            for var_display in all_vars_with_types_ai.keys():
+                                clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
+                                ai_score, _ = matcher.semantic_similarity_ai(clean_var, header)
+                                if ai_score > best_score:
+                                    best_score = ai_score
+                                    best_match = var_display
                             
-                            progress.empty()
-                            st.success(f"✅ Mapped {len(selected_headers)} headers!")
-                            st.rerun()
+                            if best_match and best_score >= CONFIDENCE_THRESHOLDS['low']:
+                                st.session_state.header_to_var_mapping[header] = best_match
+                            
+                            progress.progress((idx + 1) / len(unmapped_headers))
+                        
+                        progress.empty()
+                        st.success(f"✅ Mapped {len(unmapped_headers)} headers!")
+                        st.rerun()
+                else:
+                    st.info("All headers are already mapped!")
             
     
     # Show mapped formulas
