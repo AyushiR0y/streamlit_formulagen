@@ -875,48 +875,36 @@ def main():
                         with st.spinner("Analyzing variables and matching with headers..."):
                             # Prepare ALL variables (output, input, derived)
                             INPUT_VARIABLES = {
-                                'TERM_START_DATE': 'Date when the policy starts',
-                                'FUP_Date': 'First Unpaid Premium date',
-                                'ENTRY_AGE': 'Age at policy inception',
-                                'TOTAL_PREMIUM': 'Annual Premium amount',
-                                'BOOKING_FREQUENCY': 'Frequency of premium booking',
-                                'PREMIUM_TERM': 'Premium Paying Term',
-                                'SUM_ASSURED': 'Sum Assured',
-                                'Income_Benefit_Amount': 'Amount of income benefit',
-                                'Income_Benefit_Frequency': 'Frequency of income benefit',
-                                'DATE_OF_SURRENDER': 'Date when policy is surrendered',
-                                'no_of_premium_paid': 'Years since commencement till FUP',
-                                'maturity_date': 'Maturity date',
-                                'policy_year': 'Years since commencement + 1',
-                                'BENEFIT_TERM': 'Benefit term in years',
-                                'GSV_FACTOR': 'GSV Factor',
-                                'SSV1_FACTOR': 'SSV1 Factor',
-                                'SSV2_FACTOR': 'SSV2 Factor',
-                                'SSV3_FACTOR': 'SSV3 Factor',
-                                'FUND_VALUE': 'Fund value at surrender/maturity',
-                                'N': 'min(Policy_term, 20) - Elapsed_policy_duration',
-                                'SYSTEM_PAID': 'Amount paid by system',
-                                'CAPITAL_UNITS_VALUE': 'Units in policy fund',
+                                'TERM_START_DATE': 'input',
+                                'FUP_Date': 'input',
+                                'ENTRY_AGE': 'input',
+                                'TOTAL_PREMIUM': 'input',
+                                'BOOKING_FREQUENCY': 'input',
+                                'PREMIUM_TERM': 'input',
+                                'SUM_ASSURED': 'input',
+                                'Income_Benefit_Amount': 'input',
+                                'Income_Benefit_Frequency': 'input',
+                                'DATE_OF_SURRENDER': 'input',
+                                'no_of_premium_paid': 'input',
+                                'maturity_date': 'input',
+                                'policy_year': 'input',
+                                'BENEFIT_TERM': 'input',
+                                'GSV_FACTOR': 'input',
+                                'SSV1_FACTOR': 'input',
+                                'SSV2_FACTOR': 'input',
+                                'SSV3_FACTOR': 'input',
+                                'FUND_VALUE': 'input',
+                                'N': 'input',
+                                'SYSTEM_PAID': 'input',
+                                'CAPITAL_UNITS_VALUE': 'input',
                             }
                             
                             DERIVED_VARIABLES = {
-                                'Elapsed_policy_duration': 'Years passed since policy start',
-                                'CAPITAL_FUND_VALUE': 'Total fund value with bonuses',
-                                'FUND_FACTOR': 'Fund value computation factor',
-                                'Final_surrender_value_paid': 'Final surrender value',
+                                'Elapsed_policy_duration': 'derived',
+                                'CAPITAL_FUND_VALUE': 'derived',
+                                'FUND_FACTOR': 'derived',
+                                'Final_surrender_value_paid': 'derived',
                             }
-                            
-                            # Combine all variables for matching
-                            combined_variables = list(all_variables) + list(INPUT_VARIABLES.keys()) + list(DERIVED_VARIABLES.keys())
-                            # Remove duplicates
-                            combined_variables = list(set(combined_variables))
-                            
-                            matcher = VariableHeaderMatcher()
-                            mappings = matcher.match_all_variables(
-                                combined_variables,
-                                headers,
-                                use_ai=False  # No AI in initial pass
-                            )
                             
                             # Build a complete variable type dict
                             all_var_types = {}
@@ -926,27 +914,29 @@ def main():
                                 all_var_types[var] = 'input'
                             for var in DERIVED_VARIABLES.keys():
                                 all_var_types[var] = 'derived'
-
-                            # Pass this to the matcher
+                            
+                            # Combine all variables for matching
+                            combined_variables = list(all_var_types.keys())
+                            
                             matcher = VariableHeaderMatcher()
                             mappings = matcher.match_all_variables(
                                 combined_variables,
                                 headers,
                                 all_variables=all_var_types,  # Pass the type dict
-                                use_ai=False
+                                use_ai=False  # No AI in initial pass
                             )
-
+                            
                             # Store ALL mappings properly
                             st.session_state.variable_mappings = {}
                             st.session_state.header_to_var_mapping = {}
-
+                            
                             for var_name, mapping in mappings.items():
                                 var_type = all_var_types.get(var_name, 'output')
                                 
                                 # Update mapping with correct type
                                 mapping.variable_type = var_type
                                 
-                                # Store in variable_mappings
+                                # Store in variable_mappings (ALL variables now)
                                 st.session_state.variable_mappings[var_name] = mapping
                                 
                                 # Store in header_to_var_mapping if mapped
@@ -958,8 +948,9 @@ def main():
                             # Show matching statistics
                             total = len(combined_variables)
                             mapped = len([m for m in mappings.values() if m.mapped_header])
-                            output_mapped = len([m for m in st.session_state.variable_mappings.values() if m.mapped_header])
-                            input_derived_mapped = mapped - output_mapped
+                            output_mapped = len([m for m in st.session_state.variable_mappings.values() if m.mapped_header and m.variable_type == 'output'])
+                            input_mapped = len([m for m in st.session_state.variable_mappings.values() if m.mapped_header and m.variable_type == 'input'])
+                            derived_mapped = len([m for m in st.session_state.variable_mappings.values() if m.mapped_header and m.variable_type == 'derived'])
                             
                             # Count by method
                             method_counts = {}
@@ -968,7 +959,7 @@ def main():
                                     method = m.matching_method.split('_')[0]
                                     method_counts[method] = method_counts.get(method, 0) + 1
                             
-                            st.success(f"✅ Mapped {mapped} out of {total} variables ({output_mapped} output, {input_derived_mapped} input/derived)")
+                            st.success(f"✅ Mapped {mapped} out of {total} variables ({output_mapped} output, {input_mapped} input, {derived_mapped} derived)")
                             
                             if method_counts:
                                 st.markdown("**Matching Methods Used:**")
