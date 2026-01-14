@@ -1170,7 +1170,7 @@ def main():
                         key=f"verify_{var_name}",
                         label_visibility="collapsed"
                     )
-                    mapping.is_verified = 
+                    mapping.is_verified = verified
                 with col6:
                     is_header = var_name.startswith('_header_')
                     if not is_header:
