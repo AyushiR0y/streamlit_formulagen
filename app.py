@@ -573,16 +573,16 @@ class StableChunkedDocumentFormulaExtractor:
     
         INSTRUCTIONS:
         1. Identify a mathematical formula or calculation method for "{formula_name}"
-        2. Use the available variables where possible. If others are needed, explain why.
-        3. Extract the formula expression as accurately as possible
+        2. Use the available variables where possible.
+        3. Extract the formula expression as accurately as possible and reuse variables generated earlier.
         4. Include special conditions or multi-step logic if present
         5. If no formula is clearly defined, respond with "FORMULA_NOT_FOUND" and give reasoning
         6. Pay close attention to formulas involving:
-        - terms around GSV, SSV, surrender values
+        - terms around GSV, SSV (and Surrender Paid Amount is usually a max of multiple components)
         - exponential terms like (1/1.05)^N
         - conditions like policy term > 3 years
         - Capital Units references
-        - there is a difference between sum assured and sum assured on death
+        - ON DEATH is an important qualifier
 
         RESPONSE FORMAT:
         FORMULA_EXPRESSION: [mathematical expression using available variables]
@@ -1739,8 +1739,9 @@ def main():
                     help="Export a summarized table of formulas in CSV format."
                 )
             st.markdown("---")
-            if st.button("➡️ Proceed to Mapping", type="primary"):
-                st.switch_page("pages/2_calculation_mapping.py")
+            if st.session_state.get('formulas'):
+                if st.button("➡️ Proceed to Variable Mapping"):
+                    st.switch_page("pages/2_calculation_mapping.py")
 
 
         else:
