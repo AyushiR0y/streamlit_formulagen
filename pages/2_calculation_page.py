@@ -777,9 +777,8 @@ def main():
                     st.markdown(f"`{var_name}`")
                 
                 with col2:
-                    # Dropdown to select/change header - INCLUDE "None of the above"
                     current_index = 0
-                    dropdown_options = ["(None of the above)"] + st.session_state.excel_headers
+                    dropdown_options = ["(None of the following)"] + st.session_state.excel_headers
                     
                     if mapping.mapped_header in st.session_state.excel_headers:
                         current_index = st.session_state.excel_headers.index(mapping.mapped_header) + 1
