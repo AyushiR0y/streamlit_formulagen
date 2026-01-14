@@ -562,36 +562,56 @@ class StableChunkedDocumentFormulaExtractor:
         # List of models to try in order (cheapest to most expensive)
         models_to_try = ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4"]
         
-        prompt = f"""
-        Extract the calculation formula for "{formula_name}" from the following document content.
-
-        DOCUMENT CONTENT:
-        {context}
-
-        AVAILABLE VARIABLES:
-        {', '.join(self.input_variables.keys())}
+        # Get already extracted formulas for context
+    extracted_formulas_context = ""
+    if hasattr(self, 'extracted_formulas') and self.extracted_formulas:
+        extracted_formulas_context = "\n\nPREVIOUSLY EXTRACTED FORMULAS:\n"
+        extracted_formulas_context += "These formulas have already been defined. Reuse them by name instead of recalculating:\n"
+        for prev_formula in self.extracted_formulas:
+            name = prev_formula.get('formula_name', 'Unknown')
+            expr = prev_formula.get('formula_expression', '')
+            extracted_formulas_context += f"  • {name} = {expr}\n"
     
-        INSTRUCTIONS:
-        1. Identify a mathematical formula or calculation method for "{formula_name}"
-        2. Use the available variables where possible.
-        3. Extract the formula expression as accurately as possible and reuse variables generated earlier.
-        4. Include special conditions or multi-step logic if present
-        5. If no formula is clearly defined, respond with "FORMULA_NOT_FOUND" and give reasoning
-        6. Pay close attention to formulas involving:
-        - terms around GSV, SSV (and Surrender Paid Amount is usually a max of multiple components)
-        - exponential terms like (1/1.05)^N
-        - conditions like policy term > 3 years
-        - Capital Units references
-        - ON DEATH is an important qualifier
+    prompt = f"""
+    Extract the calculation formula for "{formula_name}" from the document content below.
 
-        RESPONSE FORMAT:
-        FORMULA_EXPRESSION: [mathematical expression using available variables]
-        VARIABLES_USED: [comma-separated list of variables from available list]
-        DOCUMENT_EVIDENCE: [exact text from document supporting this formula]
-        BUSINESS_CONTEXT: [brief explanation of what this formula calculates]
-        CONFIDENCE_LEVEL: [number between 0.1 and 1.0]
+    DOCUMENT CONTENT:
+    {context}
 
-        Respond with only the requested format.If unsure about any part, explain why in the response.
+    AVAILABLE INPUT VARIABLES:
+    {chr(10).join([f"  • {var}: {desc}" for var, desc in self.input_variables.items()])}
+
+    AVAILABLE DERIVED FORMULAS:
+    {chr(10).join([f"  • {var}: {desc}" for var, desc in getattr(self, 'basic_derived_formulas', {}).items()])}
+    {extracted_formulas_context}
+
+    
+    INSTRUCTIONS:
+    1. Extract the mathematical formula or calculation method for "{formula_name}"
+    2. Use EXACT variable names from the available lists above - do not create variations
+    3. If the document refers to a previously extracted formula, use that formula name as a variable
+    4. When you see phrases like "higher of X or Y" or "maximum of X and Y", use MAX(X, Y)
+    5. When you see phrases like "lower of X or Y" or "minimum of X and Y", use MIN(X, Y)
+    6. Pay attention to qualifier words in variable names (e.g., "ON_DEATH" vs base variables)
+    7. If a formula references components that are themselves formulas, use the component formula names
+    8. If the formula involves multiple steps, break them down clearly
+    9. Be precise about which variables are used - distinguish between similar-sounding names
+
+    RESPONSE FORMAT:
+    FORMULA_EXPRESSION: [mathematical expression using exact variable names from available lists]
+    VARIABLES_USED: [comma-separated list of variables used, must match available names exactly]
+    CALCULATION_STEPS: [if multi-step logic, describe: Step 1: ..., Step 2: ..., etc.]
+    DOCUMENT_EVIDENCE: [exact quote from document that defines this formula]
+    BUSINESS_CONTEXT: [brief explanation of what this formula calculates]
+    CONFIDENCE_LEVEL: [number between 0.1 and 1.0 indicating confidence in extraction]
+
+    IMPORTANT REMINDERS:
+    - Reuse previously extracted formulas instead of expanding them
+    - Use exact variable names from the available lists
+    - If a variable seems related but has a different name (e.g., with "_ON_DEATH" suffix), check if both exist and use the correct one
+    - If no clear formula is defined in the document, respond with "FORMULA_NOT_FOUND" and explain why
+
+    Respond ONLY in the requested format. Be precise with variable names.
         """
         
         for model in models_to_try:
