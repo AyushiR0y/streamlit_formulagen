@@ -163,49 +163,76 @@ class VariableHeaderMatcher:
         score = (ratio * 0.2 + partial_ratio * 0.2 + token_sort_ratio * 0.3 + token_set_ratio * 0.3)
         return score
     
-    def semantic_similarity_ai(self, var: str, header: str) -> Tuple[float, str]:
-        """Calculate semantic similarity using AI"""
+    def semantic_similarity_ai_batch(self, header: str, all_variables: List[str]) -> Tuple[str, float, str]:
+        """Find best matching variable for a header using AI in one call
+        
+        Args:
+            header: The Excel header to match
+            all_variables: List of all variable names (output/input/derived)
+            
+        Returns:
+            (best_variable, confidence_score, method_description)
+        """
         if MOCK_MODE or not client:
-            return 0.0, "AI unavailable"
+            return "", 0.0, "AI unavailable"
         
         try:
-            prompt = f"""Compare these two terms and rate their semantic similarity on a scale of 0.0 to 1.0:
+            # Create a concise list of variables
+            var_list = "\n".join([f"- {v}" for v in all_variables[:50]])  # Limit to 50 to save tokens
+            
+            prompt = f"""You are matching an Excel column header to variable names from insurance policy formulas.
 
-Variable: "{var}"
-Header: "{header}"
+Excel Header: "{header}"
 
-Consider:
-- Do they refer to the same concept?
-- Are they synonyms or related terms?
-- In an insurance/financial context, would they represent the same data?
+Available Variables:
+{var_list}
 
-Respond with ONLY a number between 0.0 and 1.0, followed by a brief explanation.
-Format: SCORE: X.XX | REASON: explanation"""
+Task: Find the BEST matching variable for this header. Consider:
+- Semantic similarity (same concept, synonyms)
+- Insurance/financial domain context
+- Abbreviations (e.g., 'SA' = 'Sum Assured', 'FUP' = 'First Unpaid Premium')
+
+Response format (one line only):
+VARIABLE: variable_name | SCORE: 0.XX
+
+If no good match exists, respond with: VARIABLE: none | SCORE: 0.00"""
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-                temperature=0.1
+                max_tokens=50,  # Reduced from 150
+                temperature=0.0  # More deterministic
             )
             
             response_text = response.choices[0].message.content.strip()
             
             # Parse response
+            var_match = re.search(r'VARIABLE:\s*([^\|]+)', response_text, re.IGNORECASE)
             score_match = re.search(r'SCORE:\s*([0-9]*\.?[0-9]+)', response_text, re.IGNORECASE)
-            reason_match = re.search(r'REASON:\s*(.+)', response_text, re.IGNORECASE | re.DOTALL)
             
-            score = float(score_match.group(1)) if score_match else 0.0
-            reason = reason_match.group(1).strip() if reason_match else "No explanation provided"
+            if var_match and score_match:
+                variable = var_match.group(1).strip()
+                score = float(score_match.group(1))
+                
+                if variable.lower() == "none":
+                    return "", 0.0, "AI: no match"
+                
+                return variable, min(score, 1.0), "AI_batch"
             
-            return min(score, 1.0), f"semantic_ai ({reason[:50]}...)"
+            return "", 0.0, "AI: parse error"
             
         except Exception as e:
-            st.warning(f"AI semantic matching failed: {e}")
-            return 0.0, f"AI_error: {str(e)}"
+            return "", 0.0, f"AI_error: {str(e)}"
     
-    def find_best_match(self, variable: str, headers: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
-        """Find the best matching header for a variable"""
+    def find_best_match(self, variable: str, headers: List[str], all_variables: Dict[str, str] = None, use_ai: bool = False) -> Optional[VariableMapping]:
+        """Find the best matching header for a variable
+        
+        Args:
+            variable: The variable to match
+            headers: List of Excel headers to match against
+            all_variables: Dict of {variable_name: variable_type} for context (optional)
+            use_ai: Whether to use AI semantic matching
+        """
         best_score = 0.0
         best_header = None
         best_method = "no_match"
@@ -228,7 +255,7 @@ Format: SCORE: X.XX | REASON: explanation"""
                 best_header = header
                 best_method = "fuzzy"
         
-        # Stage 3: AI semantic matching (only if enabled)
+        # Stage 3: AI semantic matching (only if enabled and we found a candidate)
         if use_ai and best_header:
             ai_score, ai_method = self.semantic_similarity_ai(variable, best_header)
             
@@ -247,8 +274,15 @@ Format: SCORE: X.XX | REASON: explanation"""
         
         return None
     
-    def match_all_variables(self, variables: List[str], headers: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
-        """Match all variables to headers"""
+    def match_all_variables(self, variables: List[str], headers: List[str], all_variables: Dict[str, str] = None, use_ai: bool = False) -> Dict[str, VariableMapping]:
+        """Match all variables to headers
+        
+        Args:
+            variables: List of variable names to match
+            headers: List of Excel headers
+            all_variables: Dict of {variable_name: variable_type} for all vars (output/input/derived)
+            use_ai: Whether to use AI
+        """
         mappings = {}
         
         progress_bar = st.progress(0)
@@ -262,7 +296,7 @@ Format: SCORE: X.XX | REASON: explanation"""
             progress_bar.progress(progress)
             status_text.text(f"Matching variable {idx + 1}/{total_vars}: {var}")
             
-            mapping = self.find_best_match(var, headers, use_ai=use_ai)
+            mapping = self.find_best_match(var, headers, all_variables=all_variables, use_ai=use_ai)
             if mapping:
                 mappings[var] = mapping
             else:
@@ -370,7 +404,24 @@ def load_excel_file(file_bytes, file_extension: str) -> Tuple[pd.DataFrame, List
         st.error(f"Error loading Excel file: {e}")
         return None, []
 
-
+def ai_match_single_header(self, header: str, all_variables_dict: Dict[str, str]) -> Tuple[str, str, float]:
+        """Match a single header to best variable using AI
+        
+        Args:
+            header: Excel header to match
+            all_variables_dict: Dict of {var_name: var_type} e.g. {"TERM_START_DATE": "input"}
+            
+        Returns:
+            (variable_name, variable_type, confidence_score)
+        """
+        all_var_names = list(all_variables_dict.keys())
+        best_var, score, method = self.semantic_similarity_ai_batch(header, all_var_names)
+        
+        if best_var and best_var in all_variables_dict:
+            var_type = all_variables_dict[best_var]
+            return best_var, var_type, score
+        
+        return "", "", 0.0
 def apply_mappings_to_formulas(formulas: List[Dict], mappings: Dict[str, VariableMapping]) -> List[Dict]:
     """Replace variables in formulas with mapped headers"""
     mapped_formulas = []
@@ -978,21 +1029,24 @@ def main():
                         if st.button("🤖", key=f"ai_{header}", help="AI suggest", disabled=MOCK_MODE):
                             with st.spinner(f"AI analyzing..."):
                                 matcher = VariableHeaderMatcher()
-                                best_match = None
-                                best_score = 0
                                 
-                                for var_display in all_vars_with_types.keys():
-                                    clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
-                                    ai_score, _ = matcher.semantic_similarity_ai(clean_var, header)
-                                    if ai_score > best_score:
-                                        best_score = ai_score
-                                        best_match = var_display
+                                # Create dict of clean var names to types
+                                var_dict = {}
+                                for var_full, var_type in all_vars_with_types.items():
+                                    clean_var = var_full.split("] ", 1)[1] if "] " in var_full else var_full
+                                    var_dict[clean_var] = var_type
                                 
-                                if best_match and best_score >= CONFIDENCE_THRESHOLDS['low']:
+                                # Use efficient AI matching
+                                best_var, var_type, score = matcher.ai_match_single_header(header, var_dict)
+                                
+                                if best_var and score >= CONFIDENCE_THRESHOLDS['low']:
+                                    # Reconstruct full variable name with prefix
+                                    best_match = f"[{var_type.upper()}] {best_var}"
                                     st.session_state.header_to_var_mapping[header] = best_match
+                                    st.toast(f"✅ Mapped to {best_var} ({score:.2f})", icon="✅")
                                     st.rerun()
                                 else:
-                                    st.warning("No match found")
+                                    st.toast("No good match found", icon="⚠️")
                 
                 st.markdown('<hr style="margin: 0.3rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
             
@@ -1212,18 +1266,18 @@ def main():
                         matcher = VariableHeaderMatcher()
                         progress = st.progress(0)
                         
+                        # Create dict for efficient AI matching
+                        var_dict = {}
+                        for var_full, var_type in all_vars_with_types_ai.items():
+                            clean_var = var_full.split("] ", 1)[1] if "] " in var_full else var_full
+                            var_dict[clean_var] = var_type
+                        
                         for idx, header in enumerate(unmapped_headers):
-                            best_match = None
-                            best_score = 0
+                            # Use efficient AI matching
+                            best_var, var_type, score = matcher.ai_match_single_header(header, var_dict)
                             
-                            for var_display in all_vars_with_types_ai.keys():
-                                clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
-                                ai_score, _ = matcher.semantic_similarity_ai(clean_var, header)
-                                if ai_score > best_score:
-                                    best_score = ai_score
-                                    best_match = var_display
-                            
-                            if best_match and best_score >= CONFIDENCE_THRESHOLDS['low']:
+                            if best_var and score >= CONFIDENCE_THRESHOLDS['low']:
+                                best_match = f"[{var_type.upper()}] {best_var}"
                                 st.session_state.header_to_var_mapping[header] = best_match
                             
                             progress.progress((idx + 1) / len(unmapped_headers))
