@@ -582,7 +582,7 @@ class StableChunkedDocumentFormulaExtractor:
         - exponential terms like (1/1.05)^N
         - conditions like policy term > 3 years
         - Capital Units references
-        - on death mentions
+        - there is a difference between sum assured and sum assured on death
 
         RESPONSE FORMAT:
         FORMULA_EXPRESSION: [mathematical expression using available variables]
@@ -1739,11 +1739,8 @@ def main():
                     help="Export a summarized table of formulas in CSV format."
                 )
             st.markdown("---")
-            st.page_link(
-                "pages/2_calculation_page.py",
-                label="➡️ Proceed to Calculations",
-                use_container_width=True
-            )
+            if st.button("➡️ Proceed to Mapping", type="primary"):
+                st.switch_page("pages/2_calculation_mapping.py")
 
 
         else:
