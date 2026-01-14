@@ -520,7 +520,167 @@ def show_calculation_results():
             st.session_state.results_df = None
             st.session_state.calc_results = None
             st.rerun()
+def show_calculation_engine():
+    """Display calculation engine interface"""
+    st.subheader("🧮 Calculation Engine")
+    st.markdown("Apply formulas to your data row-by-row and generate calculated results.")
+    
+    # Option to reupload or use existing
+    col_file1, col_file2 = st.columns([2, 1])
+    
+    with col_file1:
+        use_existing = st.checkbox("Use previously uploaded Excel file", value=True)
+    
+    calc_df = None
+    
+    if not use_existing:
+        st.markdown("### Upload New Excel File")
+        uploaded_calc_file = st.file_uploader(
+            "Upload Excel/CSV for calculations",
+            type=list(ALLOWED_EXCEL_EXTENSIONS),
+            key="calc_excel_uploader"
+        )
+        
+        if uploaded_calc_file:
+            file_extension = Path(uploaded_calc_file.name).suffix.lower()
+            calc_df, calc_headers = load_excel_file(uploaded_calc_file.read(), file_extension)
+            
+            if calc_df is not None:
+                st.success(f"✅ Loaded {len(calc_df)} rows")
+                
+                # Verify headers match mappings
+                mapped_headers = set(st.session_state.header_to_var_mapping.keys())
+                file_headers = set(calc_headers)
+                
+                if not mapped_headers.issubset(file_headers):
+                    missing = mapped_headers - file_headers
+                    st.error(f"❌ Missing headers in new file: {', '.join(list(missing)[:5])}")
+                    calc_df = None
+    else:
+        calc_df = st.session_state.excel_df
+        st.info(f"Using existing file with {len(calc_df)} rows")
+    
+    if calc_df is not None:
+        # Show preview
+        with st.expander("📊 Data Preview"):
+            st.dataframe(calc_df.head(), use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Select output columns
+        st.markdown("### Select Output Columns to Populate")
+        st.markdown("Choose which columns should be filled with formula results")
+        
+        available_cols = calc_df.columns.tolist()
+        selected_output_cols = st.multiselect(
+            "Output Columns",
+            options=available_cols,
+            help="Select columns where formula results will be written"
+        )
+        
+        if selected_output_cols:
+            st.info(f"Selected {len(selected_output_cols)} output column(s)")
+        
+        st.markdown("---")
+        
+        # Run calculations button
+        col_btn1, col_btn2 = st.columns([1, 3])
+        
+        with col_btn1:
+            if st.button("▶️ Run Calculations", type="primary", disabled=not selected_output_cols):
+                with st.spinner("Calculating..."):
+                    # Import calculation engine
+                    from calculation_engine import run_calculations
+                    
+                    # Run calculations
+                    result_df, calc_results = run_calculations(
+                        calc_df,
+                        st.session_state.formulas,
+                        st.session_state.variable_mappings,
+                        selected_output_cols
+                    )
+                    
+                    # Store results
+                    st.session_state.results_df = result_df
+                    st.session_state.calc_results = calc_results
+                    st.session_state.calculation_complete = True
+                    
+                    st.success("✅ Calculations complete!")
+                    st.rerun()
 
+def show_calculation_results():
+    """Display calculation results"""
+    st.subheader("✅ Calculation Results")
+    
+    # Summary statistics
+    st.markdown("### Summary")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    total_rows = len(st.session_state.results_df)
+    total_formulas = len(st.session_state.calc_results)
+    
+    avg_success = sum(r.success_rate for r in st.session_state.calc_results) / total_formulas if total_formulas > 0 else 0
+    
+    with col1:
+        st.metric("Total Rows", total_rows)
+    with col2:
+        st.metric("Formulas Applied", total_formulas)
+    with col3:
+        st.metric("Avg Success Rate", f"{avg_success:.1f}%")
+    
+    # Show detailed results
+    st.markdown("---")
+    st.markdown("### Formula Results")
+    
+    for calc_result in st.session_state.calc_results:
+        with st.expander(f"**{calc_result.formula_name}** - {calc_result.success_rate:.1f}% success"):
+            st.markdown(f"**Rows Calculated:** {calc_result.rows_calculated} / {total_rows}")
+            
+            if calc_result.errors:
+                st.markdown("**Errors:**")
+                for error in calc_result.errors:
+                    st.error(error)
+    
+    # Show results dataframe
+    st.markdown("---")
+    st.markdown("### Results Data")
+    st.dataframe(st.session_state.results_df, use_container_width=True)
+    
+    # Export options
+    st.markdown("---")
+    col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 2])
+    
+    with col_exp1:
+        # Export to Excel
+        from io import BytesIO
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            st.session_state.results_df.to_excel(writer, index=False, sheet_name='Results')
+        
+        st.download_button(
+            label="📥 Download Excel",
+            data=output.getvalue(),
+            file_name="calculation_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    
+    with col_exp2:
+        # Export to CSV
+        csv_data = st.session_state.results_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download CSV",
+            data=csv_data,
+            file_name="calculation_results.csv",
+            mime="text/csv"
+        )
+    
+    with col_exp3:
+        if st.button("🔄 Start New Calculation"):
+            st.session_state.calculation_complete = False
+            st.session_state.results_df = None
+            st.session_state.calc_results = None
+            st.rerun()
 def set_custom_css():
     """Apply custom CSS"""
     st.markdown(
