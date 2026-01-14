@@ -281,9 +281,12 @@ Format: SCORE: X.XX | REASON: explanation"""
         return mappings
 
 
-def extract_variables_from_formulas(formulas: List[Dict]) -> Set[str]:
-    """Extract all unique variables from formula expressions AND calculation steps"""
+def extract_variables_from_formulas(formulas: List[Dict]) -> Tuple[Set[str], Dict[str, str]]:
+    """Extract all unique variables from formula expressions AND calculation steps
+    Returns: (all_variables, derived_variables_mapping)
+    """
     variables = set()
+    derived_vars = {}  # Maps derived var to its formula
     
     # Pattern to match variable names
     var_pattern = r'\b([a-zA-Z][a-zA-Z0-9_]*)\b'
@@ -300,11 +303,27 @@ def extract_variables_from_formulas(formulas: List[Dict]) -> Set[str]:
             for step in calc_steps:
                 if isinstance(step, dict):
                     step_text = step.get('step', '') + ' ' + step.get('formula', '')
+                    step_formula = step.get('formula', '')
                     step_matches = re.findall(var_pattern, step_text)
                     variables.update(step_matches)
+                    
+                    # Try to identify derived variable definitions (e.g., "variable_name = expression")
+                    derived_match = re.match(r'([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+)', step_formula)
+                    if derived_match:
+                        var_name = derived_match.group(1)
+                        var_formula = derived_match.group(2)
+                        derived_vars[var_name] = var_formula
+                        
                 elif isinstance(step, str):
                     step_matches = re.findall(var_pattern, step)
                     variables.update(step_matches)
+                    
+                    # Try to identify derived variable definitions
+                    derived_match = re.match(r'([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+)', step)
+                    if derived_match:
+                        var_name = derived_match.group(1)
+                        var_formula = derived_match.group(2)
+                        derived_vars[var_name] = var_formula
     
     # Expanded filter list
     operators = {
@@ -332,7 +351,7 @@ def extract_variables_from_formulas(formulas: List[Dict]) -> Set[str]:
     # Filter out operators and purely numeric strings
     variables = {v for v in variables if v not in operators_normalized and not v.isdigit()}
     
-    return variables
+    return variables, derived_vars
 
 def load_excel_file(file_bytes, file_extension: str) -> Tuple[pd.DataFrame, List[str]]:
     """Load Excel file and extract headers"""
@@ -491,7 +510,7 @@ def set_custom_css():
 
 def main():
     st.set_page_config(
-        page_title="Formula Calculation - Variable Mapping",
+        page_title="Variable Mapping",
         page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -519,8 +538,7 @@ def main():
     # Initialize session state
     if 'formulas' not in st.session_state or not st.session_state.formulas:
         st.error("❌ No formulas found. Please go back to the extraction page and extract formulas first.")
-        if st.button("← Back to Extraction"):
-            st.switch_page("app.py")
+        st.info("💡 Use the sidebar navigation to return to the main page.")
         return
     
     if 'excel_headers' not in st.session_state:
@@ -537,6 +555,12 @@ def main():
     
     if 'initial_mapping_done' not in st.session_state:
         st.session_state.initial_mapping_done = False
+    
+    if 'custom_formulas' not in st.session_state:
+        st.session_state.custom_formulas = []
+    
+    if 'derived_variables' not in st.session_state:
+        st.session_state.derived_variables = {}
     
     # Main content
     col1, col2 = st.columns([1, 1])
@@ -580,7 +604,14 @@ def main():
                     st.info("🔄 **Strategy**: Uses fast lexical and fuzzy matching without AI")
                     
                     # Extract variables first to show user what will be matched
-                    all_variables = extract_variables_from_formulas(st.session_state.formulas)
+                    all_variables, derived_vars = extract_variables_from_formulas(st.session_state.formulas)
+                    st.session_state.derived_variables = derived_vars
+                    
+                    # Add custom formulas to variables
+                    for custom_formula in st.session_state.custom_formulas:
+                        custom_vars, custom_derived = extract_variables_from_formulas([custom_formula])
+                        all_variables.update(custom_vars)
+                        st.session_state.derived_variables.update(custom_derived)
                     
                     if st.button("🔗 Start Automatic Mapping", type="primary", disabled=st.session_state.initial_mapping_done):
                         with st.spinner("Analyzing variables and matching with headers..."):
@@ -621,14 +652,34 @@ def main():
         st.markdown("Variables from formulas **and** AI-generated calculation steps.")
         
         # Extract variables from formulas
-        all_variables = extract_variables_from_formulas(st.session_state.formulas)
+        all_variables, derived_vars = extract_variables_from_formulas(st.session_state.formulas)
+        st.session_state.derived_variables = derived_vars
+        
+        # Add custom formula variables
+        for custom_formula in st.session_state.custom_formulas:
+            custom_vars, custom_derived = extract_variables_from_formulas([custom_formula])
+            all_variables.update(custom_vars)
+            st.session_state.derived_variables.update(custom_derived)
         
         if all_variables:
-            var_df = pd.DataFrame({
-                'Variable Name': sorted(list(all_variables)),
-                'Type': ['Needs Mapping'] * len(all_variables)
-            })
+            # Separate into input and derived variables
+            input_vars = [v for v in all_variables if v not in st.session_state.derived_variables]
+            derived_var_list = [v for v in all_variables if v in st.session_state.derived_variables]
+            
+            var_df_data = []
+            for var in sorted(input_vars):
+                var_df_data.append({'Variable Name': var, 'Type': 'Input'})
+            for var in sorted(derived_var_list):
+                var_df_data.append({'Variable Name': var, 'Type': 'Derived'})
+            
+            var_df = pd.DataFrame(var_df_data)
             st.dataframe(var_df, use_container_width=True, hide_index=True)
+            
+            # Show derived variable formulas
+            if st.session_state.derived_variables:
+                with st.expander("📐 Derived Variable Formulas", expanded=False):
+                    for var, formula in sorted(st.session_state.derived_variables.items()):
+                        st.markdown(f"**`{var}`** = `{formula}`")
             
             # Show which formulas each variable appears in
             with st.expander("🔍 Variable Usage Details", expanded=False):
@@ -640,11 +691,46 @@ def main():
                                    str(f.get('formula_expression', '')) + ' ' + 
                                    str(f.get('calculation_steps', '')))
                     ]
+                    # Also check custom formulas
+                    for cf in st.session_state.custom_formulas:
+                        if re.search(r'\b' + re.escape(var) + r'\b', 
+                                   str(cf.get('formula_expression', ''))):
+                            formulas_with_var.append(cf.get('formula_name', 'Custom'))
+                    
                     if formulas_with_var:
-                        st.markdown(f"**`{var}`**: {len(formulas_with_var)} formula(s)")
+                        var_type = "Derived" if var in st.session_state.derived_variables else "Input"
+                        st.markdown(f"**`{var}`** ({var_type}): {len(formulas_with_var)} formula(s)")
                         st.caption(", ".join(formulas_with_var))
         else:
             st.info("No variables detected in formulas.")
+        
+        # Add custom formula section
+        st.markdown("---")
+        st.subheader("➕ Add Custom Formula for Mapping")
+        
+        with st.form("custom_formula_form"):
+            custom_name = st.text_input("Formula Name", placeholder="e.g., Custom_Calculation")
+            custom_expr = st.text_area("Formula Expression", placeholder="e.g., variable1 + variable2 * 0.5")
+            
+            submitted = st.form_submit_button("Add Custom Formula")
+            if submitted and custom_name and custom_expr:
+                st.session_state.custom_formulas.append({
+                    'formula_name': custom_name,
+                    'formula_expression': custom_expr
+                })
+                st.success(f"✅ Added custom formula: {custom_name}")
+                st.rerun()
+        
+        if st.session_state.custom_formulas:
+            st.markdown("**Custom Formulas:**")
+            for idx, cf in enumerate(st.session_state.custom_formulas):
+                col_cf1, col_cf2 = st.columns([4, 1])
+                with col_cf1:
+                    st.code(f"{cf['formula_name']} = {cf['formula_expression']}", language="python")
+                with col_cf2:
+                    if st.button("🗑️", key=f"delete_cf_{idx}"):
+                        st.session_state.custom_formulas.pop(idx)
+                        st.rerun()
     
     # Variable Mapping Section
     if st.session_state.initial_mapping_done and st.session_state.variable_mappings:
@@ -691,24 +777,30 @@ def main():
                     st.markdown(f"`{var_name}`")
                 
                 with col2:
-                    # Dropdown to select/change header
+                    # Dropdown to select/change header - INCLUDE "None of the above"
                     current_index = 0
+                    dropdown_options = ["(None of the above)"] + st.session_state.excel_headers
+                    
                     if mapping.mapped_header in st.session_state.excel_headers:
                         current_index = st.session_state.excel_headers.index(mapping.mapped_header) + 1
                     
                     new_header = st.selectbox(
                         "Header",
-                        options=[""] + st.session_state.excel_headers,
+                        options=dropdown_options,
                         index=current_index,
                         key=f"header_{var_name}",
                         label_visibility="collapsed"
                     )
                     
                     # Update mapping if changed
+                    # Treat "(None of the above)" as empty
+                    if new_header == "(None of the above)":
+                        new_header = ""
+                    
                     if new_header != mapping.mapped_header:
                         mapping.mapped_header = new_header
                         mapping.confidence_score = 1.0 if new_header else 0.0
-                        mapping.matching_method = "manual"
+                        mapping.matching_method = "manual" if new_header else "none_selected"
                         mapping.is_verified = True if new_header else False
                 
                 with col3:
@@ -797,17 +889,27 @@ def main():
         st.markdown("---")
         st.subheader("🤖 AI-Powered Enhancement (Optional)")
         
-        unmapped_vars = [v for v, m in st.session_state.variable_mappings.items() if not m.mapped_header]
-        low_conf_vars = [v for v, m in st.session_state.variable_mappings.items() if m.mapped_header and m.confidence_score < CONFIDENCE_THRESHOLDS['medium']]
+        # Get variables that selected "None of the above"
+        none_selected_vars = [v for v, m in st.session_state.variable_mappings.items() 
+                             if not m.mapped_header and m.matching_method == "none_selected"]
+        unmapped_vars = [v for v, m in st.session_state.variable_mappings.items() 
+                        if not m.mapped_header and m.matching_method != "none_selected"]
+        low_conf_vars = [v for v, m in st.session_state.variable_mappings.items() 
+                        if m.mapped_header and m.confidence_score < CONFIDENCE_THRESHOLDS['medium']]
         
-        if unmapped_vars or low_conf_vars:
-            st.warning(f"⚠️ Found {len(unmapped_vars)} unmapped and {len(low_conf_vars)} low-confidence mappings")
+        if none_selected_vars:
+            st.info(f"ℹ️ {len(none_selected_vars)} variable(s) marked as 'None of the above' - AI will attempt to find mappings for these")
+        
+        if unmapped_vars or low_conf_vars or none_selected_vars:
+            if unmapped_vars or low_conf_vars:
+                st.warning(f"⚠️ Found {len(unmapped_vars)} unmapped and {len(low_conf_vars)} low-confidence mappings")
+            
             st.markdown("**Use AI to improve these mappings:**")
             
-            col_ai1, col_ai2 = st.columns([1, 1])
+            col_ai1, col_ai2, col_ai3 = st.columns([1, 1, 1])
             
             with col_ai1:
-                if st.button("🤖 Use AI for Unmapped Variables", type="secondary", disabled=MOCK_MODE or not unmapped_vars):
+                if st.button("🤖 AI for Unmapped", type="secondary", disabled=MOCK_MODE or not unmapped_vars):
                     with st.spinner("Running AI semantic matching on unmapped variables..."):
                         matcher = VariableHeaderMatcher()
                         for var in unmapped_vars:
@@ -819,10 +921,22 @@ def main():
                         st.rerun()
             
             with col_ai2:
-                if st.button("🤖 Use AI for Low Confidence Mappings", type="secondary", disabled=MOCK_MODE or not low_conf_vars):
+                if st.button("🤖 AI for Low Confidence", type="secondary", disabled=MOCK_MODE or not low_conf_vars):
                     with st.spinner("Running AI semantic matching on low confidence mappings..."):
                         matcher = VariableHeaderMatcher()
                         for var in low_conf_vars:
+                            improved_mapping = matcher.find_best_match(var, st.session_state.excel_headers, use_ai=True)
+                            if improved_mapping and improved_mapping.confidence_score > st.session_state.variable_mappings[var].confidence_score:
+                                st.session_state.variable_mappings[var] = improved_mapping
+                        
+                        st.success("✅ AI matching complete!")
+                        st.rerun()
+            
+            with col_ai3:
+                if st.button("🤖 AI for 'None of above'", type="secondary", disabled=MOCK_MODE or not none_selected_vars):
+                    with st.spinner("Running AI semantic matching on 'None of the above' variables..."):
+                        matcher = VariableHeaderMatcher()
+                        for var in none_selected_vars:
                             improved_mapping = matcher.find_best_match(var, st.session_state.excel_headers, use_ai=True)
                             if improved_mapping and improved_mapping.confidence_score > st.session_state.variable_mappings[var].confidence_score:
                                 st.session_state.variable_mappings[var] = improved_mapping
