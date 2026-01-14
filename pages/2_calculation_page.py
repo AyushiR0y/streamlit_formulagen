@@ -712,7 +712,7 @@ def main():
         st.error("❌ No formulas found in session.")
         st.warning("⚠️ **Note:** Refreshing this page will clear your session. Use the navigation menu instead of browser refresh.")
         st.info("💡 Use the sidebar navigation to return to the main page and extract formulas again.")
-        j
+        
         # Option to upload previously saved mappings
         st.markdown("---")
         st.subheader("📥 Restore Previous Session")
