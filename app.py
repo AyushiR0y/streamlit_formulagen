@@ -1745,7 +1745,7 @@ def main():
             st.markdown("---")
             if st.session_state.get('formulas'):
                 if st.button("➡️ Proceed to Variable Mapping"):
-                    st.switch_page("pages/2_calculation_.py")
+                    st.switch_page("pages/2_calculation_page.py")
 
 
         else:
