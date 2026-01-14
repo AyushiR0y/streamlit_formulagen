@@ -516,7 +516,35 @@ def main():
         initial_sidebar_state="expanded"
     )
     
+    
     set_custom_css()
+    # Cache formulas in browser session storage to prevent loss on refresh
+    if 'formulas' not in st.session_state:
+        st.session_state.formulas = []
+    
+    if 'custom_formulas' not in st.session_state:
+        st.session_state.custom_formulas = []
+    
+    if 'excel_headers' not in st.session_state:
+        st.session_state.excel_headers = []
+    
+    if 'variable_mappings' not in st.session_state:
+        st.session_state.variable_mappings = {}
+    
+    if 'mapping_complete' not in st.session_state:
+        st.session_state.mapping_complete = False
+    
+    if 'excel_df' not in st.session_state:
+        st.session_state.excel_df = None
+    
+    if 'initial_mapping_done' not in st.session_state:
+        st.session_state.initial_mapping_done = False
+    
+    if 'derived_variables' not in st.session_state:
+        st.session_state.derived_variables = {}
+    
+    if 'header_to_var_mapping' not in st.session_state:
+        st.session_state.header_to_var_mapping = {}
     
     # Custom header
     st.markdown(
@@ -535,32 +563,11 @@ def main():
     
     st.markdown("---")
     
-    # Initialize session state
-    if 'formulas' not in st.session_state or not st.session_state.formulas:
+    # Check if formulas exist
+    if not st.session_state.formulas:
         st.error("❌ No formulas found. Please go back to the extraction page and extract formulas first.")
         st.info("💡 Use the sidebar navigation to return to the main page.")
         return
-    
-    if 'excel_headers' not in st.session_state:
-        st.session_state.excel_headers = []
-    
-    if 'variable_mappings' not in st.session_state:
-        st.session_state.variable_mappings = {}
-    
-    if 'mapping_complete' not in st.session_state:
-        st.session_state.mapping_complete = False
-    
-    if 'excel_df' not in st.session_state:
-        st.session_state.excel_df = None
-    
-    if 'initial_mapping_done' not in st.session_state:
-        st.session_state.initial_mapping_done = False
-    
-    if 'custom_formulas' not in st.session_state:
-        st.session_state.custom_formulas = []
-    
-    if 'derived_variables' not in st.session_state:
-        st.session_state.derived_variables = {}
     
     # Main content
     col1, col2 = st.columns([1, 1])
@@ -706,20 +713,22 @@ def main():
         
         # Add custom formula section
         st.markdown("---")
-        st.subheader("➕ Add Custom Formula for Mapping")
-        
-        with st.form("custom_formula_form"):
-            custom_name = st.text_input("Formula Name", placeholder="e.g., Custom_Calculation")
-            custom_expr = st.text_area("Formula Expression", placeholder="e.g., variable1 + variable2 * 0.5")
-            
-            submitted = st.form_submit_button("Add Custom Formula")
-            if submitted and custom_name and custom_expr:
-                st.session_state.custom_formulas.append({
-                    'formula_name': custom_name,
-                    'formula_expression': custom_expr
-                })
-                st.success(f"✅ Added custom formula: {custom_name}")
-                st.rerun()
+        with st.expander("➕ Add Custom Formula for Mapping", expanded=False):
+            with st.form("custom_formula_form"):
+                col_cf1, col_cf2 = st.columns([1, 2])
+                with col_cf1:
+                    custom_name = st.text_input("Name", placeholder="Custom_Calculation")
+                with col_cf2:
+                    custom_expr = st.text_input("Expression", placeholder="variable1 + variable2 * 0.5")
+                
+                submitted = st.form_submit_button("Add Formula", use_container_width=True)
+                if submitted and custom_name and custom_expr:
+                    st.session_state.custom_formulas.append({
+                        'formula_name': custom_name,
+                        'formula_expression': custom_expr
+                    })
+                    st.success(f"✅ Added: {custom_name}")
+                    st.rerun()
         
         if st.session_state.custom_formulas:
             st.markdown("**Custom Formulas:**")
@@ -828,12 +837,29 @@ def main():
                 
                 with col2:
                     # Dropdown for variable selection
-                    dropdown_options = ["(Unmapped)"] + sorted(all_vars_with_types.keys())
-                    current_mapping = st.session_state.header_to_var_mapping.get(header, "(Unmapped)")
+                    # Create display names without prefixes
+                    dropdown_display = ["(Unmapped)"]
+                    dropdown_to_full = {"(Unmapped)": "(Unmapped)"}
+                    for var_full in sorted(all_vars_with_types.keys()):
+                        var_clean = var_full.split("] ", 1)[1] if "] " in var_full else var_full
+                        var_type = all_vars_with_types[var_full]
+                        display_name = f"{var_clean} ({var_type})"
+                        dropdown_display.append(display_name)
+                        dropdown_to_full[display_name] = var_full
+
+                    dropdown_options = dropdown_display
+                    current_mapping_full = st.session_state.header_to_var_mapping.get(header, "(Unmapped)")
                     current_index = 0
-                    
-                    if current_mapping in dropdown_options:
-                        current_index = dropdown_options.index(current_mapping)
+
+                    # Find display name for current mapping
+                    current_display = "(Unmapped)"
+                    for display, full in dropdown_to_full.items():
+                        if full == current_mapping_full:
+                            current_display = display
+                            break
+
+                    if current_display in dropdown_options:
+                        current_index = dropdown_options.index(current_display)
                     
                     selected_var = st.selectbox(
                         "Variable",
@@ -843,12 +869,14 @@ def main():
                         label_visibility="collapsed"
                     )
                     
-                    # Update mapping
-                    if selected_var == "(Unmapped)":
+                    # Update mapping - convert display back to full name
+                    selected_var_full = dropdown_to_full.get(selected_var, selected_var)
+
+                    if selected_var_full == "(Unmapped)":
                         if header in st.session_state.header_to_var_mapping:
                             del st.session_state.header_to_var_mapping[header]
                     else:
-                        st.session_state.header_to_var_mapping[header] = selected_var
+                        st.session_state.header_to_var_mapping[header] = selected_var_full
                 
                 with col3:
                     # Show variable type and matching method
@@ -933,13 +961,69 @@ def main():
                     for h in headers:
                         st.markdown(f"- `{h}`")
             
-            # Show unmapped variables
+            # Show unmapped variables with actions
             unmapped_vars = [v for v in all_available_vars if v not in var_to_headers]
             if unmapped_vars:
                 st.warning(f"⚠️ {len(unmapped_vars)} output variables not yet mapped to any header")
-                with st.expander("View Unmapped Variables", expanded=False):
+                with st.expander("Manage Unmapped Variables", expanded=False):
                     for v in unmapped_vars:
-                        st.markdown(f"- `{v}`")
+                        col_uv1, col_uv2, col_uv3, col_uv4 = st.columns([3, 2, 2, 2])
+                        
+                        with col_uv1:
+                            st.markdown(f"`{v}`")
+                        
+                        with col_uv2:
+                            # Leave as is (do nothing)
+                            if st.button("Leave", key=f"leave_{v}", help="Keep unmapped"):
+                                st.info(f"'{v}' will remain unmapped")
+                        
+                        with col_uv3:
+                            # Map to variable manually
+                            if st.button("Map", key=f"manual_map_{v}", help="Choose header manually"):
+                                st.session_state[f'show_mapping_{v}'] = True
+                                st.rerun()
+                        
+                        with col_uv4:
+                            # AI map
+                            if st.button("AI Map", key=f"ai_map_{v}", help="Auto-map with AI", disabled=MOCK_MODE):
+                                with st.spinner(f"AI mapping {v}..."):
+                                    matcher = VariableHeaderMatcher()
+                                    best_header = None
+                                    best_score = 0
+                                    
+                                    for header in st.session_state.excel_headers:
+                                        if header not in st.session_state.header_to_var_mapping:
+                                            ai_score, _ = matcher.semantic_similarity_ai(v, header)
+                                            if ai_score > best_score:
+                                                best_score = ai_score
+                                                best_header = header
+                                    
+                                    if best_header and best_score >= CONFIDENCE_THRESHOLDS['low']:
+                                        st.session_state.header_to_var_mapping[best_header] = f"[OUTPUT] {v}"
+                                        st.success(f"Mapped to '{best_header}'")
+                                        st.rerun()
+                                    else:
+                                        st.warning("No good match found")
+                        
+                        # Show manual mapping dropdown if requested
+                        if st.session_state.get(f'show_mapping_{v}', False):
+                            available_headers = [h for h in st.session_state.excel_headers 
+                                               if h not in st.session_state.header_to_var_mapping]
+                            if available_headers:
+                                selected_header = st.selectbox(
+                                    f"Select header for {v}:",
+                                    options=["(Cancel)"] + available_headers,
+                                    key=f"select_{v}"
+                                )
+                                if selected_header != "(Cancel)":
+                                    st.session_state.header_to_var_mapping[selected_header] = f"[OUTPUT] {v}"
+                                    st.session_state[f'show_mapping_{v}'] = False
+                                    st.success(f"Mapped '{v}' to '{selected_header}'")
+                                    st.rerun()
+                            else:
+                                st.warning("No unmapped headers available")
+                        
+                        st.markdown("---")
         
         with tab3:
             st.markdown("#### Input & Derived Variables Reference")
@@ -1048,43 +1132,43 @@ def main():
             )
         
         with col_btn3:
-            # Bulk AI mapping for unmapped headers
+            # Selective AI mapping
             unmapped_headers = [h for h in st.session_state.excel_headers 
                               if h not in st.session_state.header_to_var_mapping]
             
-            if st.button("🤖 AI Map All Unmapped", disabled=MOCK_MODE or not unmapped_headers):
-                with st.spinner(f"Running AI on {len(unmapped_headers)} unmapped headers..."):
-                    matcher = VariableHeaderMatcher()
+            if unmapped_headers:
+                with st.expander("🤖 AI Map Selected Headers", expanded=False):
+                    selected_headers = st.multiselect(
+                        "Choose headers to AI map:",
+                        options=unmapped_headers,
+                        default=unmapped_headers[:5] if len(unmapped_headers) <= 5 else []
+                    )
                     
-                    # Prepare all available variables
-                    all_vars_for_ai = {}
-                    for var in st.session_state.variable_mappings.keys():
-                        all_vars_for_ai[f"[OUTPUT] {var}"] = var
-                    
-                    INPUT_VARS = ['TERM_START_DATE', 'FUP_Date', 'ENTRY_AGE', 'TOTAL_PREMIUM', 
-                                 'BOOKING_FREQUENCY', 'PREMIUM_TERM', 'SUM_ASSURED']
-                    for var in INPUT_VARS:
-                        all_vars_for_ai[f"[INPUT] {var}"] = var
-                    
-                    progress = st.progress(0)
-                    for idx, header in enumerate(unmapped_headers):
-                        best_match = None
-                        best_score = 0
-                        
-                        for var_display, clean_var in all_vars_for_ai.items():
-                            ai_score, _ = matcher.semantic_similarity_ai(clean_var, header)
-                            if ai_score > best_score:
-                                best_score = ai_score
-                                best_match = var_display
-                        
-                        if best_match and best_score >= CONFIDENCE_THRESHOLDS['medium']:
-                            st.session_state.header_to_var_mapping[header] = best_match
-                        
-                        progress.progress((idx + 1) / len(unmapped_headers))
-                    
-                    progress.empty()
-                    st.success(f"✅ AI mapping complete!")
-                    st.rerun()
+                    if st.button("Run AI Mapping", disabled=MOCK_MODE or not selected_headers):
+                        with st.spinner(f"Running AI on {len(selected_headers)} headers..."):
+                            matcher = VariableHeaderMatcher()
+                            
+                            # Get all available variables with types
+                            progress = st.progress(0)
+                            for idx, header in enumerate(selected_headers):
+                                best_match = None
+                                best_score = 0
+                                
+                                for var_display in all_vars_with_types.keys():
+                                    clean_var = var_display.split("] ", 1)[1] if "] " in var_display else var_display
+                                    ai_score, _ = matcher.semantic_similarity_ai(clean_var, header)
+                                    if ai_score > best_score:
+                                        best_score = ai_score
+                                        best_match = var_display
+                                
+                                if best_match and best_score >= CONFIDENCE_THRESHOLDS['low']:
+                                    st.session_state.header_to_var_mapping[header] = best_match
+                                
+                                progress.progress((idx + 1) / len(selected_headers))
+                            
+                            progress.empty()
+                            st.success(f"✅ Mapped {len(selected_headers)} headers!")
+                            st.rerun()
             
     
     # Show mapped formulas
