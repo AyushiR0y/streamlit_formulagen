@@ -193,20 +193,20 @@ class VariableHeaderMatcher:
             
             prompt = f"""You are matching an Excel column header to variable names from insurance policy formulas.
 
-Excel Header: "{header}"
+            Excel Header: "{header}"
 
-Available Variables:
-{var_list}
+            Available Variables:
+            {var_list}
 
-Task: Find the BEST matching variable for this header. Consider:
-- Semantic similarity (same concept, synonyms)
-- Insurance/financial domain context
-- Abbreviations (e.g., 'SA' = 'Sum Assured', 'FUP' = 'First Unpaid Premium')
+            Task: Find the BEST matching variable for this header. Consider:
+            - Semantic similarity (same concept, synonyms)
+            - Insurance/financial domain context
+            - Abbreviations (e.g., 'SA' = 'Sum Assured', 'FUP' = 'First Unpaid Premium')
 
-Response format (one line only):
-VARIABLE: variable_name | SCORE: 0.XX
+            Response format (one line only):
+            VARIABLE: variable_name | SCORE: 0.XX
 
-If no good match exists, respond with: VARIABLE: none | SCORE: 0.00"""
+            If no good match exists, respond with: VARIABLE: none | SCORE: 0.00"""
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
@@ -1309,15 +1309,13 @@ def main():
             # Input Variables Table
             st.markdown("**Input Variables**")
             input_data = []
-            for var, desc in INPUT_VARIABLES.items():
-                mapped_headers = [h for h, v in st.session_state.header_to_var_mapping.items() 
-                                if v == f"[INPUT] {var}"]
-                status = "✅ " + ", ".join(mapped_headers) if mapped_headers else "⚪ Not mapped"
-                input_data.append({
-                    "Variable": var,
-                    "Description": desc,
-                    "Mapping Status": status
-                })
+            for var_name, mapping in st.session_state.variable_mappings.items():
+                if mapping.variable_type == 'input':
+                    status = f"✅ {mapping.mapped_header}" if mapping.mapped_header else "⚪ Not mapped"
+                    input_data.append({
+                        "Variable": var_name,
+                        "Mapping Status": status
+                    })
             
             input_df = pd.DataFrame(input_data)
             st.dataframe(input_df, use_container_width=True, hide_index=True)
@@ -1327,16 +1325,14 @@ def main():
             # Derived Variables Table
             st.markdown("**Derived Variables**")
             derived_data = []
-            for var, desc in DERIVED_VARIABLES.items():
-                mapped_headers = [h for h, v in st.session_state.header_to_var_mapping.items() 
-                                if v == f"[DERIVED] {var}"]
-                status = "✅ " + ", ".join(mapped_headers) if mapped_headers else "⚪ Not mapped"
-                derived_data.append({
-                    "Variable": var,
-                    "Description": desc,
-                    "Mapping Status": status
-                })
-            
+            for var_name, mapping in st.session_state.variable_mappings.items():
+                if mapping.variable_type == 'derived':
+                    status = f"✅ {mapping.mapped_header}" if mapping.mapped_header else "⚪ Not mapped"
+                    derived_data.append({
+                        "Variable": var_name,
+                        "Mapping Status": status
+                    })
+                        
             derived_df = pd.DataFrame(derived_data)
             st.dataframe(derived_df, use_container_width=True, hide_index=True)
             
