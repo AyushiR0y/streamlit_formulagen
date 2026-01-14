@@ -69,9 +69,9 @@ class VariableHeaderMatcher:
         
     def normalize_text(self, text: str) -> str:
         """Normalize text for comparison"""
-        # Convert to lowercase, remove special chars, collapse whitespace
+        # Convert to lowercase, keep underscores, remove other special chars, collapse whitespace
         text = text.lower()
-        text = re.sub(r'[^a-z0-9\s]', ' ', text)
+        text = re.sub(r'[^a-z0-9\s_]', ' ', text)  # Keep underscores
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
     
@@ -113,6 +113,14 @@ class VariableHeaderMatcher:
     
     def lexical_similarity(self, var: str, header: str) -> float:
         """Calculate lexical similarity using multiple methods"""
+        # First check: exact match (case-insensitive)
+        if var.lower() == header.lower():
+            return 1.0
+        
+        # Second check: exact match with underscores converted to spaces
+        if var.lower().replace('_', ' ') == header.lower().replace('_', ' '):
+            return 0.99
+        
         var_norm = self.normalize_text(var)
         header_norm = self.normalize_text(header)
         
@@ -120,9 +128,9 @@ class VariableHeaderMatcher:
         var_expanded = self.expand_abbreviations(var_norm)
         header_expanded = self.expand_abbreviations(header_norm)
         
-        # Exact match
+        # Exact match after normalization
         if var_expanded == header_expanded:
-            return 1.0
+            return 0.98
         
         # Substring match
         if var_expanded in header_expanded or header_expanded in var_expanded:
@@ -147,6 +155,8 @@ class VariableHeaderMatcher:
     
     def fuzzy_similarity(self, var: str, header: str) -> float:
         """Calculate fuzzy string similarity"""
+        if var.lower() == header.lower():
+            return 1.0
         var_norm = self.normalize_text(var)
         header_norm = self.normalize_text(header)
         
@@ -406,23 +416,23 @@ def load_excel_file(file_bytes, file_extension: str) -> Tuple[pd.DataFrame, List
         return None, []
 
 def ai_match_single_header(self, header: str, all_variables_dict: Dict[str, str]) -> Tuple[str, str, float]:
-        """Match a single header to best variable using AI
+    """Match a single header to best variable using AI
+    
+    Args:
+        header: Excel header to match
+        all_variables_dict: Dict of {var_name: var_type} e.g. {"TERM_START_DATE": "input"}
         
-        Args:
-            header: Excel header to match
-            all_variables_dict: Dict of {var_name: var_type} e.g. {"TERM_START_DATE": "input"}
-            
-        Returns:
-            (variable_name, variable_type, confidence_score)
-        """
-        all_var_names = list(all_variables_dict.keys())
-        best_var, score, method = self.semantic_similarity_ai_batch(header, all_var_names)
-        
-        if best_var and best_var in all_variables_dict:
-            var_type = all_variables_dict[best_var]
-            return best_var, var_type, score
-        
-        return "", "", 0.0
+    Returns:
+        (variable_name, variable_type, confidence_score)
+    """
+    all_var_names = list(all_variables_dict.keys())
+    best_var, score, method = self.semantic_similarity_ai_batch(header, all_var_names)
+    
+    if best_var and best_var in all_variables_dict:
+        var_type = all_variables_dict[best_var]
+        return best_var, var_type, score
+    
+    return "", "", 0.0
 def apply_mappings_to_formulas(formulas: List[Dict], mappings: Dict[str, VariableMapping]) -> List[Dict]:
     """Replace variables in formulas with mapped headers"""
     mapped_formulas = []
