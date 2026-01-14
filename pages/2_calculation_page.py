@@ -642,7 +642,7 @@ def main():
     if 'calc_results' not in st.session_state:
         st.session_state.calc_results = None
     
-    # Check if we're in calculation results mode
+   # Check if we're in calculation results mode
     if st.session_state.mapping_complete and st.session_state.calculation_complete:
         show_calculation_results()
         return
@@ -651,6 +651,28 @@ def main():
     if st.session_state.mapping_complete:
         show_calculation_engine()
         return
+
+    # Check if formulas exist
+    if not st.session_state.formulas:
+        st.error("❌ No formulas found in session.")
+        st.warning("⚠️ **Note:** Refreshing this page will clear your session. Use the navigation menu instead of browser refresh.")
+        st.info("💡 Use the sidebar navigation to return to the main page and extract formulas again.")
+        
+        # Option to upload previously saved mappings
+        st.markdown("---")
+        st.subheader("📥 Restore Previous Session")
+        uploaded_json = st.file_uploader("Upload previously exported mappings JSON", type=['json'])
+        if uploaded_json:
+            try:
+                import_data = json.loads(uploaded_json.read())
+                if 'formulas' in import_data:
+                    st.session_state.formulas = import_data['formulas']
+                    st.success("✅ Formulas restored!")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Error loading file: {e}")
+        return
+
     # Main content
     col1, col2 = st.columns([1, 1])
     
