@@ -325,7 +325,24 @@ If no good match exists, respond with: VARIABLE: none | SCORE: 0.00"""
         
         return mappings
 
-
+    def ai_match_single_header(self, header: str, all_variables_dict: Dict[str, str]) -> Tuple[str, str, float]:
+        """Match a single header to best variable using AI
+        
+        Args:
+            header: Excel header to match
+            all_variables_dict: Dict of {var_name: var_type} e.g. {"TERM_START_DATE": "input"}
+            
+        Returns:
+            (variable_name, variable_type, confidence_score)
+        """
+        all_var_names = list(all_variables_dict.keys())
+        best_var, score, method = self.semantic_similarity_ai_batch(header, all_var_names)
+        
+        if best_var and best_var in all_variables_dict:
+            var_type = all_variables_dict[best_var]
+            return best_var, var_type, score
+        
+        return "", "", 0.0
 def extract_variables_from_formulas(formulas: List[Dict]) -> Tuple[Set[str], Dict[str, str]]:
     """Extract all unique variables from formula expressions AND calculation steps
     Returns: (all_variables, derived_variables_mapping)
@@ -415,24 +432,7 @@ def load_excel_file(file_bytes, file_extension: str) -> Tuple[pd.DataFrame, List
         st.error(f"Error loading Excel file: {e}")
         return None, []
 
-def ai_match_single_header(self, header: str, all_variables_dict: Dict[str, str]) -> Tuple[str, str, float]:
-    """Match a single header to best variable using AI
-    
-    Args:
-        header: Excel header to match
-        all_variables_dict: Dict of {var_name: var_type} e.g. {"TERM_START_DATE": "input"}
-        
-    Returns:
-        (variable_name, variable_type, confidence_score)
-    """
-    all_var_names = list(all_variables_dict.keys())
-    best_var, score, method = self.semantic_similarity_ai_batch(header, all_var_names)
-    
-    if best_var and best_var in all_variables_dict:
-        var_type = all_variables_dict[best_var]
-        return best_var, var_type, score
-    
-    return "", "", 0.0
+
 def apply_mappings_to_formulas(formulas: List[Dict], mappings: Dict[str, VariableMapping]) -> List[Dict]:
     """Replace variables in formulas with mapped headers"""
     mapped_formulas = []
