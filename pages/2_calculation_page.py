@@ -250,67 +250,71 @@ class VariableHeaderMatcher:
             
         return combined, method
     
-    def semantic_similarity_ai(self, header: str, variables: List[str]) -> Tuple[Optional[str], str]:
+    def semantic_similarity_ai(self, header: str, variables: List[str]) -> Tuple[str, float, str]:
         """
-        Uses AI to compare one header against a list of variables and picks the best match.
-        
-        Returns:
-            (best_variable_name, explanation_string)
-            Returns (None, ...) if AI finds no match.
+        Use AI to compare header against ALL variables and return the best match
+        Returns: (best_variable, score, reason)
         """
         if MOCK_MODE or not client:
-            return None, "AI unavailable"
+            return "", 0.0, "AI unavailable"
         
         try:
-            # Format the variable list for the prompt
-            var_list_display = "\n".join([f"- {v}" for v in variables])
-
-            prompt = f"""You are an expert in Insurance and Financial Data Mapping.
-
-            I have an Excel Header: "{header}"
-
-            Here is the list of available Variables:
-            {var_list_display}
-
-            Task: Identify the variable from the list that best matches the header.
-            - Match based on concept, synonyms (e.g., 'Amt' -> 'Amount'), or abbreviations.
-            - If none of the variables are a good match, return "None".
+            # Format variables list for the prompt
+            var_list = "\n".join([f"  - {var}" for var in variables])
             
-            Respond in strict JSON format with keys: "best_match", "confidence" (0.0-1.0), "reason".
-            Example: {{"best_match": "TOTAL_PREMIUM", "confidence": 0.9, "reason": "Direct synonym match"}}"""
+            prompt = f"""You are an expert in insurance and financial data mapping.
+
+                Excel Header: "{header}"
+
+                Available Variables:
+                {var_list}
+
+                Task: Find the BEST matching variable from the list above that represents the same data as the Excel Header.
+
+                Consider:
+                - Semantic meaning in insurance/financial context
+                - Common abbreviations (SSV = Special Surrender Value, GSV = Guaranteed Surrender Value, etc.)
+                - SSV1, SSV2 and SSV3 have distinct meanings compared to SSV. Be careful not to confuse them.
+                - Conceptual equivalence even if wording differs
+                - Industry-standard terminology
+
+                Respond in this EXACT format:
+                VARIABLE: <exact variable name from the list, or NONE if no good match>
+                SCORE: <confidence score 0.0 to 1.0>
+                REASON: <brief explanation of why this is the best match>
+
+                If no variable is a good semantic match (score would be below 0.75), respond with:
+                VARIABLE: NONE
+                SCORE: 0.0
+                REASON: <explanation>"""
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
+                max_tokens=200,
                 temperature=0.1
             )
             
             response_text = response.choices[0].message.content.strip()
             
-            # Extract JSON from response (handles potential markdown code blocks)
-            try:
-                # Find the first object-like structure
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if json_match:
-                    import json # Local import if not global
-                    data = json.loads(json_match.group())
-                    best_var = data.get("best_match")
-                    confidence = float(data.get("confidence", 0.0))
-                    reason = data.get("reason", "")
-                    
-                    # Validate if returned variable is actually in the list
-                    if best_var == "None" or best_var not in variables:
-                        return None, "AI: No suitable match found"
-                    
-                    return best_var, f"AI ({confidence:.2f}): {reason[:40]}..."
-                else:
-                    return None, "AI: Invalid JSON response"
-            except Exception:
-                return None, "AI: Parse Error"
-                
+            # Parse response
+            var_match = re.search(r'VARIABLE:\s*(.+?)(?:\n|$)', response_text, re.IGNORECASE)
+            score_match = re.search(r'SCORE:\s*([0-9]*\.?[0-9]+)', response_text, re.IGNORECASE)
+            reason_match = re.search(r'REASON:\s*(.+)', response_text, re.IGNORECASE | re.DOTALL)
+            
+            matched_var = var_match.group(1).strip() if var_match else "NONE"
+            score = float(score_match.group(1)) if score_match else 0.0
+            reason = reason_match.group(1).strip() if reason_match else "No explanation provided"
+            
+            # If AI said NONE or variable not in our list, return empty
+            if matched_var == "NONE" or matched_var not in variables:
+                return "", 0.0, reason
+            
+            return matched_var, min(score, 1.0), reason
+            
         except Exception as e:
-            return None, f"API Error: {str(e)}"
+            st.warning(f"AI semantic matching failed: {e}")
+            return "", 0.0, f"AI_error: {str(e)}"
     
     def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
         """
