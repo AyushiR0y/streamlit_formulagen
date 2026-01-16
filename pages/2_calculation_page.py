@@ -187,7 +187,7 @@ class VariableHeaderMatcher:
         return 0.0
     
     def fuzzy_similarity(self, var: str, header: str) -> float:
-        """Calculate fuzzy string similarity"""
+        """Calculate fuzzy string similarity with Length Penalty to avoid 'N' matching 'Number'"""
         var_norm = self.normalize_text(var)
         header_norm = self.normalize_text(header)
         
@@ -203,6 +203,16 @@ class VariableHeaderMatcher:
         
         # Weighted average favoring token-based matching
         score = (ratio * 0.2 + partial_ratio * 0.2 + token_sort_ratio * 0.3 + token_set_ratio * 0.3)
+        
+        # --- IMPROVEMENT: Length Penalty ---
+        # If a variable is very short (e.g., "N") and the header is long (e.g., "Net Income"),
+        # drastically reduce the score to prevent false positives.
+        len_diff = abs(len(var) - len(header))
+        if len(var) <= 2 and len(header) > 8:
+            score = score * 0.1  # 90% penalty
+        elif len_diff > 10:
+            score = score * 0.7  # Moderate penalty for large size differences
+            
         return score
     
     def semantic_similarity_ai(self, var: str, header: str) -> Tuple[float, str]:
@@ -671,7 +681,7 @@ def main():
             <div class="header-bar">
                 <img src="https://raw.githubusercontent.com/AyushiR0y/streamlit_formulagen/main/assets/logo.png" style="height: 100px;">
                 <div class="header-title" style="font-size: 2.5rem; font-weight: 750; color: #004DA8;">
-                    Formula Calculation - Variable Mapping
+                    Variable Mapping
                 </div>
             </div>
         </div>
@@ -823,24 +833,29 @@ def main():
                     st.markdown('<br>', unsafe_allow_html=True)
                     if st.button("🔗 Start Automatic Mapping", type="primary", key="start_mapping_btn", disabled=st.session_state.initial_mapping_done):
                         with st.spinner("Analyzing headers and matching with variables..."):
+                            # 1. Get ACTIVE (Filtered) variables
                             active_variables = st.session_state.selected_variables_for_mapping
+                            
+                            # 2. CLEAR OLD MAPPINGS (Crucial step)
+                            st.session_state.header_to_var_mapping = {}
                             
                             matcher = VariableHeaderMatcher()
                             
-                            # Map Headers -> Variables
+                            # 3. Map Headers -> Variables
                             mappings = matcher.match_all(
                                 targets=headers,
-                                candidates=active_variables,
+                                candidates=active_variables,  # ONLY use filtered variables
                                 use_ai=False
                             )
                             
-                            # Update session state with Header -> Variable mapping
+                            # 4. Update session state
                             new_mapping = {}
                             for header, mapping_obj in mappings.items():
                                 new_mapping[header] = mapping_obj.mapped_header
                             
                             st.session_state.header_to_var_mapping = new_mapping
                             st.session_state.initial_mapping_done = True
+                            
                             
                             # Show matching statistics
                             total = len(mappings)

@@ -6,32 +6,20 @@ import re
 from pathlib import Path
 from dataclasses import dataclass
 import os
+import math
 
+# Load Common CSS
 def load_css(file_name="style.css"):
-    """
-    Loads CSS file. Automatically handles cases where the script
-    is inside a 'pages' subdirectory by looking one level up.
-    """
-    # 1. Get the directory where this script is currently running from
+    """Loads CSS file. Automatically handles cases where script is inside a 'pages' subdirectory."""
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # 2. Check if we are inside a 'pages' folder
-    # If yes, we need to look one level up ('..') to find the CSS
     if os.path.basename(current_dir) == "pages":
         css_path = os.path.join(current_dir, "..", file_name)
     else:
         css_path = os.path.join(current_dir, file_name)
-    
-    # 3. Normalize the path (converts ".." to actual parent path)
     css_path = os.path.normpath(css_path)
-    
-    # 4. Load and inject the CSS
     if os.path.exists(css_path):
         with open(css_path, 'r') as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-    else:
-        # If it still fails, show exactly where it looked
-        st.error(f"⚠️ CSS file not found at: `{css_path}`. <br>Please ensure `style.css` is in the main project folder.", unsafe_allow_html=True)
 
 # --- Data Classes ---
 @dataclass
@@ -56,16 +44,20 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         # Replace variable names with their values
         eval_expr = expression
         
-        # Sort by length descending to avoid partial replacements
+        # Sort by length descending to avoid partial replacements (e.g., 'VAR' replacing 'VAR2')
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
         
         for var_name in sorted_vars:
+            # Use word boundaries to ensure exact matches
             pattern = r'\b' + re.escape(var_name) + r'\b'
             value = variables[var_name]
             
-            # Handle NaN/None values
-            if pd.isna(value) or value is None:
+            # Handle NaN/None/Empty values
+            if pd.isna(value) or value is None or value == '':
                 value = 0
+            else:
+                # Ensure numeric type
+                value = float(value)
             
             eval_expr = re.sub(pattern, str(value), eval_expr)
         
@@ -77,7 +69,6 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         eval_expr = eval_expr.replace('SQRT(', 'sqrt(')
         
         # Safe evaluation with limited builtins
-        import math
         allowed_builtins = {
             'max': max, 
             'min': min, 
@@ -102,12 +93,16 @@ def calculate_row(row: pd.Series, formula_expr: str, mappings: Dict) -> Any:
     # Build variable values from row data
     var_values = {}
     
-    for var_name, mapping in mappings.items():
-        if mapping.mapped_header and mapping.mapped_header in row.index:
-            value = row[mapping.mapped_header]
+    # Mappings is { "VariableName": VariableMappingObject }
+    for var_name, mapping_obj in mappings.items():
+        # mapping_obj.mapped_header is the Excel Column Name
+        header = mapping_obj.mapped_header
+        
+        if header and header in row.index:
+            value = row[header]
             var_values[var_name] = value
-    
-    # Evaluate formula
+            
+    # Evaluate formula with the mapped values
     result = safe_eval(formula_expr, var_values)
     return result
 
@@ -118,15 +113,6 @@ def run_calculations(df: pd.DataFrame,
                      output_columns: List[str]) -> tuple[pd.DataFrame, List[CalculationResult]]:
     """
     Run all formulas on dataframe
-    
-    Args:
-        df: Input dataframe
-        formulas: List of formula dictionaries
-        mappings: Variable to header mappings (Keys: VariableName, Values: VariableMapping object)
-        output_columns: List of output column names to populate
-    
-    Returns:
-        (result_df, calculation_results)
     """
     result_df = df.copy()
     calculation_results = []
@@ -141,18 +127,24 @@ def run_calculations(df: pd.DataFrame,
         # Determine output column for this formula
         output_col = None
         for col in output_columns:
-            # Fuzzy match formula name to column name
             if col.lower() in formula_name.lower() or formula_name.lower() in col.lower():
                 output_col = col
                 break
         
         if not output_col:
-            # Use formula name as column if no match
             output_col = formula_name
         
         # Ensure column exists in dataframe
         if output_col not in result_df.columns:
             result_df[output_col] = np.nan
+        
+        # Create a progress bar for this formula's execution
+        progress_text = f"Processing: {formula_name}..."
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        status_text.info(progress_text)
+        
+        total_rows = len(result_df)
         
         # Calculate for each row
         for idx, row in result_df.iterrows():
@@ -161,14 +153,25 @@ def run_calculations(df: pd.DataFrame,
                 
                 if isinstance(result, str) and result.startswith("ERROR"):
                     errors.append(f"Row {idx}: {result}")
+                    result_df.at[idx, output_col] = result
                 else:
                     result_df.at[idx, output_col] = result
                     success_count += 1
             
             except Exception as e:
-                errors.append(f"Row {idx}: {str(e)}")
+                error_msg = f"Row {idx}: {str(e)}"
+                errors.append(error_msg)
+                result_df.at[idx, output_col] = f"ERROR"
+                
+            # Update Progress
+            if idx % 10 == 0: # Update every 10 rows to save performance
+                progress_bar.progress((idx + 1) / total_rows)
+                status_text.text(f"{progress_text} ({idx+1}/{total_rows})")
         
-        success_rate = (success_count / len(result_df)) * 100 if len(result_df) > 0 else 0
+        progress_bar.empty()
+        status_text.empty()
+        
+        success_rate = (success_count / total_rows) * 100 if total_rows > 0 else 0
         
         calculation_results.append(CalculationResult(
             formula_name=formula_name,
@@ -190,7 +193,6 @@ def main():
     
     load_css()
     
-    # Custom header
     st.markdown(
         """
         <div class="header-container">
@@ -204,9 +206,6 @@ def main():
         """,
         unsafe_allow_html=True
     )
-    
-    st.markdown("---")
-    
     
     # Check for required session state
     if 'excel_df' not in st.session_state or st.session_state.excel_df is None:
@@ -277,7 +276,7 @@ def main():
         
         with col_btn1:
             if st.button("▶️ Run Calculations", type="primary", disabled=not selected_output_cols):
-                with st.spinner("Calculating..."):
+                with st.spinner("Initializing calculation engine..."):
                     # 1. Prepare Mappings
                     # Session state has { "Excel_Header": "VariableName" }
                     # Calculation logic needs { "VariableName": VariableMappingObject }
@@ -286,6 +285,7 @@ def main():
                     for header, var_name in st.session_state.header_to_var_mapping.items():
                         if not header or not var_name:
                             continue
+                        
                         # Create a mapping object expected by calculate_row
                         transformed_mappings[var_name] = VariableMapping(
                             variable_name=var_name,
@@ -295,10 +295,14 @@ def main():
                             is_verified=True
                         )
                     
+                    # Debugging info: Show how many variables we have mapped
+                    st.info(f"Found {len(transformed_mappings)} variable mappings ready for calculation.")
+                    
                     # 2. Run Logic
-                    # Use formulas from session state (mapped or original? 
-                    # The calculation logic uses formula_expression from original formulas)
                     formulas_to_run = st.session_state.formulas
+                    
+                    if not formulas_to_run:
+                        st.error("No formulas found in session.")
                     
                     try:
                         result_df, calc_results = run_calculations(
