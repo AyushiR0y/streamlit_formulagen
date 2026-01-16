@@ -42,27 +42,21 @@ class VariableMapping:
 def safe_convert_to_number(value: Any) -> float:
     """Safely convert various types to float, handling dates, timestamps, etc."""
     
-    # Handle None/NaN
+    # Handle None/NaN - return 0 for calculations
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return 0.0
     
     # Handle empty strings
-    if value == '' or value == ' ':
+    if isinstance(value, str) and (value == '' or value.strip() == ''):
         return 0.0
     
-    # Already a number
-    if isinstance(value, (int, float)):
+    # Already a number - return as is
+    if isinstance(value, (int, float)) and not pd.isna(value):
         return float(value)
     
-    # Handle datetime/timestamp - convert to timestamp or year
+    # Handle datetime/timestamp - convert to year
     if isinstance(value, (datetime, date, pd.Timestamp)):
-        # You can choose what makes sense for your use case:
-        # Option 1: Convert to year
         return float(value.year)
-        # Option 2: Convert to Unix timestamp
-        # return value.timestamp()
-        # Option 3: Extract days since epoch
-        # return (value - datetime(1970, 1, 1)).days
     
     # Handle strings
     if isinstance(value, str):
@@ -70,7 +64,9 @@ def safe_convert_to_number(value: Any) -> float:
         try:
             # Remove common formatting characters
             cleaned = value.replace(',', '').replace('$', '').replace('%', '').strip()
-            return float(cleaned)
+            if cleaned:
+                return float(cleaned)
+            return 0.0
         except ValueError:
             # If it's a date string, try to parse it
             try:
@@ -123,10 +119,17 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         }
         
         result = eval(eval_expr, {"__builtins__": allowed_builtins}, {})
-        return result
+        
+        # Ensure result is a number
+        if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
+            return float(result)
+        else:
+            return None
     
     except Exception as e:
-        return f"ERROR: {str(e)}"
+        # Return None instead of error string
+        print(f"Evaluation error for '{expression}': {str(e)}")
+        return None
 
 
 def calculate_row(row: pd.Series, formula_expr: str, mappings: Dict) -> Any:
@@ -214,6 +217,9 @@ def run_calculations(df: pd.DataFrame,
         formula_name = formula.get('formula_name', 'Unknown')
         formula_expr = formula.get('formula_expression', '')
         
+        st.info(f"🔧 Processing formula: **{formula_name}**")
+        st.code(f"Expression: {formula_expr}")
+        
         errors = []
         success_count = 0
         
@@ -229,14 +235,32 @@ def run_calculations(df: pd.DataFrame,
         
         total_rows = len(result_df)
         
+        # Debug: show first row calculation
+        if total_rows > 0:
+            first_row = result_df.iloc[0]
+            var_values_debug = {}
+            for var_name, mapping_obj in mappings.items():
+                header = mapping_obj.mapped_header
+                if header and header in first_row.index:
+                    var_values_debug[var_name] = first_row[header]
+            
+            st.write(f"📊 **Sample calculation (Row 0):**")
+            st.write(f"Variables: {var_values_debug}")
+            first_result = calculate_row(first_row, formula_expr, mappings)
+            st.write(f"Result: {first_result}")
+        
         # Calculate for each row
         for idx, row in result_df.iterrows():
             try:
                 result = calculate_row(row, formula_expr, mappings)
                 
-                if isinstance(result, str) and result.startswith("ERROR"):
+                # Check if result is valid
+                if result is None:
+                    errors.append(f"Row {idx}: Calculation returned None")
+                    result_df.at[idx, output_col] = np.nan
+                elif isinstance(result, str) and result.startswith("ERROR"):
                     errors.append(f"Row {idx}: {result}")
-                    result_df.at[idx, output_col] = None  # Use None instead of ERROR string
+                    result_df.at[idx, output_col] = np.nan
                 else:
                     result_df.at[idx, output_col] = result
                     success_count += 1
@@ -244,17 +268,20 @@ def run_calculations(df: pd.DataFrame,
             except Exception as e:
                 error_msg = f"Row {idx}: {str(e)}"
                 errors.append(error_msg)
-                result_df.at[idx, output_col] = None
+                result_df.at[idx, output_col] = np.nan
             
             # Update Progress every 10 rows
-            if idx % 10 == 0:
-                progress_bar.progress((idx + 1) / total_rows)
+            if idx % 10 == 0 or idx == total_rows - 1:
+                progress = min((idx + 1) / total_rows, 1.0)
+                progress_bar.progress(progress)
                 status_text.text(f"{progress_text} ({idx+1}/{total_rows})")
         
         progress_bar.empty()
         status_text.empty()
         
         success_rate = (success_count / total_rows) * 100 if total_rows > 0 else 0
+        
+        st.success(f"✅ Completed: {success_count}/{total_rows} rows ({success_rate:.1f}% success)")
         
         calculation_results.append(CalculationResult(
             formula_name=f"{formula_name} → {output_col}",
@@ -305,6 +332,13 @@ def main():
     if 'formulas' not in st.session_state or not st.session_state.formulas:
         st.error("❌ No formulas found. Please extract formulas first.")
         return
+    
+    # Debug: Show current mappings and formulas
+    with st.expander("🔍 Debug: Current Configuration"):
+        st.write("**Mappings:**")
+        st.json(st.session_state.header_to_var_mapping)
+        st.write("**Formulas:**")
+        st.json(st.session_state.formulas)
     
     # Option to reupload or use existing
     st.subheader("📊 Data Source")
@@ -379,10 +413,12 @@ def main():
             with st.expander("🔍 Preview: Formulas to be executed"):
                 for formula in st.session_state.formulas:
                     fname = formula.get('formula_name', 'Unknown')
+                    fexpr = formula.get('formula_expression', '')
                     matched_col = match_formula_to_output_column(fname, selected_output_cols)
                     
                     if matched_col in selected_output_cols:
                         st.markdown(f"- **{fname}** → `{matched_col}`")
+                        st.code(f"Expression: {fexpr}")
         
         st.markdown("---")
         
@@ -409,6 +445,9 @@ def main():
                         )
                     
                     st.info(f"📊 Using {len(transformed_mappings)} variable mappings")
+                    st.write("Mappings:")
+                    for var, mapping in transformed_mappings.items():
+                        st.write(f"  - {var} → {mapping.mapped_header}")
                     
                     formulas_to_run = st.session_state.formulas
                     
@@ -424,6 +463,7 @@ def main():
                         st.session_state.calc_results = calc_results
                         
                         st.success("✅ Calculations complete!")
+                        st.balloons()
                         st.rerun()
                     
                     except Exception as e:
@@ -479,6 +519,18 @@ def main():
         # Show results dataframe
         st.markdown("---")
         st.markdown("### Results Data")
+        
+        # Show statistics for calculated columns
+        if selected_output_cols:
+            st.write("**Calculated Column Statistics:**")
+            for col in selected_output_cols:
+                if col in st.session_state.results_df.columns:
+                    non_null_count = st.session_state.results_df[col].notna().sum()
+                    st.write(f"- **{col}**: {non_null_count} non-null values out of {total_rows}")
+                    if non_null_count > 0:
+                        sample_values = st.session_state.results_df[col].dropna().head(3).tolist()
+                        st.write(f"  Sample values: {sample_values}")
+        
         st.dataframe(st.session_state.results_df, use_container_width=True, height=400)
         
         # Export options
