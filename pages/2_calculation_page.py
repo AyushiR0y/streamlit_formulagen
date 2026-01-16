@@ -1243,12 +1243,20 @@ def main():
         with col_stat3:
             st.metric("Mapped Variables", mapped_count)
         
+        # AI Enhancement Section
         st.markdown("---")
         st.subheader("🤖 AI-Powered Enhancement")
 
         # Initialize session state for AI assist if not exists
         if 'ai_assist_headers' not in st.session_state:
             st.session_state.ai_assist_headers = []
+
+        # Track if we just completed AI mapping
+        if 'ai_mapping_complete' not in st.session_state:
+            st.session_state.ai_mapping_complete = False
+
+        if 'ai_changes_made' not in st.session_state:
+            st.session_state.ai_changes_made = []
 
         # Multiselect for choosing headers for AI assist
         active_headers_list = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
@@ -1265,6 +1273,31 @@ def main():
             on_change=update_ai_headers,
             help="Choose headers where you want AI to find better variable matches"
         )
+
+        # Show results from previous AI run if available
+        if st.session_state.ai_mapping_complete and st.session_state.ai_changes_made:
+            improved_count = len(st.session_state.ai_changes_made)
+            st.success(f"✅ AI updated {improved_count} mapping(s) in one batch!")
+            
+            # Show what changed in a nice table
+            with st.expander("📝 View Changes", expanded=True):
+                changes_df = pd.DataFrame(st.session_state.ai_changes_made)
+                changes_df['confidence'] = changes_df['score'].apply(lambda x: f"{x:.2%}")
+                changes_df = changes_df[['header', 'old', 'new', 'confidence', 'reason']]
+                changes_df.columns = ['Header', 'Previous', 'New Variable', 'Confidence', 'Reason']
+                st.dataframe(changes_df, use_container_width=True, hide_index=True)
+            
+            # Reset flag after showing
+            if st.button("✓ Got it", key="clear_ai_results"):
+                st.session_state.ai_mapping_complete = False
+                st.session_state.ai_changes_made = []
+                st.rerun()
+
+        elif st.session_state.ai_mapping_complete and not st.session_state.ai_changes_made:
+            st.info("ℹ️ No improvements found. Current mappings are optimal.")
+            if st.button("✓ Got it", key="clear_ai_no_results"):
+                st.session_state.ai_mapping_complete = False
+                st.rerun()
 
         if selected_for_ai:
             col_ai1, col_ai2 = st.columns([2, 3])
@@ -1286,7 +1319,7 @@ def main():
                                 current_val = st.session_state.header_to_var_mapping.get(header, "")
                                 
                                 if current_val != ai_variable:
-                                    # Update the mapping
+                                    # Update the mapping - THIS IS THE KEY PART
                                     st.session_state.header_to_var_mapping[header] = ai_variable
                                     improved_count += 1
                                     changes_made.append({
@@ -1297,29 +1330,21 @@ def main():
                                         'reason': ai_reason
                                     })
                         
+                        # Store results in session state
+                        st.session_state.ai_changes_made = changes_made
+                        st.session_state.ai_mapping_complete = True
+                        
                         # Clear selection after processing
                         st.session_state.ai_assist_headers = []
                         
-                        if improved_count > 0:
-                            st.success(f"✅ AI updated {improved_count} mapping(s) in one batch!")
-                            
-                            # Show what changed in a nice table
-                            with st.expander("📝 View Changes", expanded=True):
-                                changes_df = pd.DataFrame(changes_made)
-                                changes_df['confidence'] = changes_df['score'].apply(lambda x: f"{x:.2%}")
-                                changes_df = changes_df[['header', 'old', 'new', 'confidence', 'reason']]
-                                changes_df.columns = ['Header', 'Previous', 'New Variable', 'Confidence', 'Reason']
-                                st.dataframe(changes_df, use_container_width=True, hide_index=True)
-                        else:
-                            st.info("ℹ️ No improvements found. Current mappings are optimal.")
-                        
-                        # Rerun to update the mapping table
+                        # Force rerun to show updated mappings
                         st.rerun()
             
             with col_ai2:
                 st.info(f"💡 {len(selected_for_ai)} header(s) selected | Will process in ONE AI call")
         else:
-            st.info("💡 Select headers above and click AI assist to improve their mappings")
+            if not st.session_state.ai_mapping_complete:
+                st.info("💡 Select headers above and click AI assist to improve their mappings")
 
         if MOCK_MODE:
             st.warning("⚠️ AI assist is disabled. Configure Azure OpenAI credentials to enable.")
