@@ -7,18 +7,31 @@ from pathlib import Path
 from dataclasses import dataclass
 import os
 
-# Load Common CSS
 def load_css(file_name="style.css"):
-    """Loads CSS file. Automatically handles cases where script is inside a 'pages' subdirectory."""
+    """
+    Loads CSS file. Automatically handles cases where the script
+    is inside a 'pages' subdirectory by looking one level up.
+    """
+    # 1. Get the directory where this script is currently running from
     current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 2. Check if we are inside a 'pages' folder
+    # If yes, we need to look one level up ('..') to find the CSS
     if os.path.basename(current_dir) == "pages":
         css_path = os.path.join(current_dir, "..", file_name)
     else:
         css_path = os.path.join(current_dir, file_name)
+    
+    # 3. Normalize the path (converts ".." to actual parent path)
     css_path = os.path.normpath(css_path)
+    
+    # 4. Load and inject the CSS
     if os.path.exists(css_path):
         with open(css_path, 'r') as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    else:
+        # If it still fails, show exactly where it looked
+        st.error(f"⚠️ CSS file not found at: `{css_path}`. <br>Please ensure `style.css` is in the main project folder.", unsafe_allow_html=True)
 
 # --- Data Classes ---
 @dataclass
