@@ -250,71 +250,100 @@ class VariableHeaderMatcher:
             
         return combined, method
     
-    def semantic_similarity_ai(self, header: str, variables: List[str]) -> Tuple[str, float, str]:
+    def semantic_similarity_ai_batch(self, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
         """
-        Use AI to compare header against ALL variables and return the best match
-        Returns: (best_variable, score, reason)
+        Use AI to map multiple headers to variables in a single API call
+        Returns: {header: (best_variable, score, reason)}
         """
         if MOCK_MODE or not client:
-            return "", 0.0, "AI unavailable"
+            return {h: ("", 0.0, "AI unavailable") for h in headers}
         
         try:
-            # Format variables list for the prompt
+            # Format headers and variables for the prompt
+            header_list = "\n".join([f"  {i+1}. {h}" for i, h in enumerate(headers)])
             var_list = "\n".join([f"  - {var}" for var in variables])
             
             prompt = f"""You are an expert in insurance and financial data mapping.
 
-                Excel Header: "{header}"
+                Excel Headers to Map:
+                {header_list}
 
                 Available Variables:
                 {var_list}
 
-                Task: Find the BEST matching variable from the list above that represents the same data as the Excel Header.
+                Task: For EACH header above, find the BEST matching variable from the variable list.
 
                 Consider:
                 - Semantic meaning in insurance/financial context
                 - Common abbreviations (SSV = Special Surrender Value, GSV = Guaranteed Surrender Value, etc.)
-                - SSV1, SSV2 and SSV3 have distinct meanings compared to SSV. Be careful not to confuse them.
+                - SSV1, SSV2, SSV3 are distinct from each other and SSV. Map accordingly.
                 - Conceptual equivalence even if wording differs
                 - Industry-standard terminology
 
-                Respond in this EXACT format:
+                Respond for EACH header in this EXACT format:
+
+                HEADER: <exact header name from the list>
                 VARIABLE: <exact variable name from the list, or NONE if no good match>
                 SCORE: <confidence score 0.0 to 1.0>
-                REASON: <brief explanation of why this is the best match>
+                REASON: <brief explanation>
 
-                If no variable is a good semantic match (score would be below 0.75), respond with:
-                VARIABLE: NONE
-                SCORE: 0.0
-                REASON: <explanation>"""
+                ---
+
+                Repeat the above format for each header. If no variable is a good semantic match (score below 0.75), use VARIABLE: NONE"""
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=200,
+                max_tokens=500 + (len(headers) * 100),  # Scale tokens with number of headers
                 temperature=0.1
             )
             
             response_text = response.choices[0].message.content.strip()
             
-            # Parse response
-            var_match = re.search(r'VARIABLE:\s*(.+?)(?:\n|$)', response_text, re.IGNORECASE)
-            score_match = re.search(r'SCORE:\s*([0-9]*\.?[0-9]+)', response_text, re.IGNORECASE)
-            reason_match = re.search(r'REASON:\s*(.+)', response_text, re.IGNORECASE | re.DOTALL)
+            # Parse response for each header
+            results = {}
             
-            matched_var = var_match.group(1).strip() if var_match else "NONE"
-            score = float(score_match.group(1)) if score_match else 0.0
-            reason = reason_match.group(1).strip() if reason_match else "No explanation provided"
+            # Split by separator or header patterns
+            sections = re.split(r'\n---\n|\n\nHEADER:', response_text)
             
-            # If AI said NONE or variable not in our list, return empty
-            if matched_var == "NONE" or matched_var not in variables:
-                return "", 0.0, reason
+            for section in sections:
+                if not section.strip():
+                    continue
+                
+                # Add back "HEADER:" if it was removed by split
+                if not section.strip().startswith("HEADER:"):
+                    section = "HEADER:" + section
+                
+                # Parse this section
+                header_match = re.search(r'HEADER:\s*(.+?)(?:\n|$)', section, re.IGNORECASE)
+                var_match = re.search(r'VARIABLE:\s*(.+?)(?:\n|$)', section, re.IGNORECASE)
+                score_match = re.search(r'SCORE:\s*([0-9]*\.?[0-9]+)', section, re.IGNORECASE)
+                reason_match = re.search(r'REASON:\s*(.+?)(?:\n---|\Z)', section, re.IGNORECASE | re.DOTALL)
+                
+                if header_match:
+                    header = header_match.group(1).strip()
+                    matched_var = var_match.group(1).strip() if var_match else "NONE"
+                    score = float(score_match.group(1)) if score_match else 0.0
+                    reason = reason_match.group(1).strip() if reason_match else "No explanation"
+                    
+                    # Validate header is in our list
+                    if header in headers:
+                        # If AI said NONE or variable not in our list, return empty
+                        if matched_var == "NONE" or matched_var not in variables:
+                            results[header] = ("", 0.0, reason)
+                        else:
+                            results[header] = (matched_var, min(score, 1.0), reason)
             
-            return matched_var, min(score, 1.0), reason
+            # Fill in any missing headers with empty results
+            for header in headers:
+                if header not in results:
+                    results[header] = ("", 0.0, "No AI response")
+            
+            return results
             
         except Exception as e:
-            st.warning(f"AI semantic matching failed: {e}")
-            return "", 0.0, f"AI_error: {str(e)}"
+            st.warning(f"AI batch semantic matching failed: {e}")
+            return {h: ("", 0.0, f"AI_error: {str(e)}") for h in headers}
     
     def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
         """
@@ -1214,7 +1243,7 @@ def main():
         with col_stat3:
             st.metric("Mapped Variables", mapped_count)
         
-        # AI Enhancement Section
+        st.markdown("---")
         st.subheader("🤖 AI-Powered Enhancement")
 
         # Initialize session state for AI assist if not exists
@@ -1241,49 +1270,59 @@ def main():
             col_ai1, col_ai2 = st.columns([2, 3])
             
             with col_ai1:
-                # Apply custom class 'ai-assist-btn' for distinct styling
-                if st.button("🤖 Run AI Assist", type="primary", key="ai_assist_btn", disabled=MOCK_MODE):
-                    with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers..."):
+                if st.button("🤖 Run AI Assist (Batch)", type="primary", key="ai_assist_btn", disabled=MOCK_MODE):
+                    with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers in one batch..."):
                         matcher = VariableHeaderMatcher()
                         current_variables = st.session_state.selected_variables_for_mapping if st.session_state.selected_variables_for_mapping else get_all_master_variables()
+                        
+                        # Process ALL headers in ONE AI call
+                        batch_results = matcher.semantic_similarity_ai_batch(selected_for_ai, current_variables)
                         
                         improved_count = 0
                         changes_made = []
                         
-                        for header in selected_for_ai:
-                            improved_mapping = matcher.find_best_match(
-                                header, 
-                                current_variables, 
-                                use_ai=True
-                            )
-                            if improved_mapping and improved_mapping.mapped_header:
+                        for header, (ai_variable, ai_score, ai_reason) in batch_results.items():
+                            if ai_variable and ai_score >= CONFIDENCE_THRESHOLDS['low']:
                                 current_val = st.session_state.header_to_var_mapping.get(header, "")
-                                new_val = improved_mapping.mapped_header
                                 
-                                if current_val != new_val:
-                                    st.session_state.header_to_var_mapping[header] = new_val
+                                if current_val != ai_variable:
+                                    # Update the mapping
+                                    st.session_state.header_to_var_mapping[header] = ai_variable
                                     improved_count += 1
-                                    changes_made.append(f"**{header}**: `{current_val or '(None)'}` → `{new_val}` (confidence: {improved_mapping.confidence_score:.2f})")
+                                    changes_made.append({
+                                        'header': header,
+                                        'old': current_val or '(None)',
+                                        'new': ai_variable,
+                                        'score': ai_score,
+                                        'reason': ai_reason
+                                    })
                         
                         # Clear selection after processing
                         st.session_state.ai_assist_headers = []
                         
                         if improved_count > 0:
-                            st.success(f"✅ AI updated {improved_count} mapping(s)!")
+                            st.success(f"✅ AI updated {improved_count} mapping(s) in one batch!")
                             
-                            # Show what changed in an expander
+                            # Show what changed in a nice table
                             with st.expander("📝 View Changes", expanded=True):
-                                for change in changes_made:
-                                    st.markdown(change)
+                                changes_df = pd.DataFrame(changes_made)
+                                changes_df['confidence'] = changes_df['score'].apply(lambda x: f"{x:.2%}")
+                                changes_df = changes_df[['header', 'old', 'new', 'confidence', 'reason']]
+                                changes_df.columns = ['Header', 'Previous', 'New Variable', 'Confidence', 'Reason']
+                                st.dataframe(changes_df, use_container_width=True, hide_index=True)
                         else:
                             st.info("ℹ️ No improvements found. Current mappings are optimal.")
                         
+                        # Rerun to update the mapping table
                         st.rerun()
             
             with col_ai2:
-                st.info(f"💡 {len(selected_for_ai)} header(s) selected for AI enhancement")
+                st.info(f"💡 {len(selected_for_ai)} header(s) selected | Will process in ONE AI call")
         else:
-            st.info("💡 Select headers above and click AI assist button to improve their mappings")
+            st.info("💡 Select headers above and click AI assist to improve their mappings")
+
+        if MOCK_MODE:
+            st.warning("⚠️ AI assist is disabled. Configure Azure OpenAI credentials to enable.")
         
         # --- Confirm & Export Section ---
         st.markdown("---")
