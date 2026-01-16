@@ -1,3 +1,4 @@
+
 import os
 import re
 import json
@@ -246,42 +247,46 @@ Format: SCORE: X.XX | REASON: explanation"""
             st.warning(f"AI semantic matching failed: {e}")
             return 0.0, f"AI_error: {str(e)}"
     
-    def find_best_match(self, variable: str, headers: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
-        """Find the best matching header for a variable"""
+    def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
+        """
+        Generic finder.
+        Finds the best matching candidate for the target.
+        Used as: find_best_match(Excel_Header, Variable_List)
+        """
         best_score = 0.0
-        best_header = None
+        best_candidate = None
         best_method = "no_match"
         
         # Stage 1: Lexical matching
-        for header in headers:
-            lex_score = self.lexical_similarity(variable, header)
+        for candidate in candidates:
+            lex_score = self.lexical_similarity(target, candidate)
             
             if lex_score > best_score:
                 best_score = lex_score
-                best_header = header
+                best_candidate = candidate
                 best_method = "lexical"
         
         # Stage 2: Fuzzy matching
-        for header in headers:
-            fuzzy_score = self.fuzzy_similarity(variable, header)
+        for candidate in candidates:
+            fuzzy_score = self.fuzzy_similarity(target, candidate)
             
             if fuzzy_score > best_score:
                 best_score = fuzzy_score
-                best_header = header
+                best_candidate = candidate
                 best_method = "fuzzy"
         
         # Stage 3: AI semantic matching (only if enabled)
-        if use_ai and best_header:
-            ai_score, ai_method = self.semantic_similarity_ai(variable, best_header)
+        if use_ai and best_candidate:
+            ai_score, ai_method = self.semantic_similarity_ai(target, best_candidate)
             
             if ai_score > best_score:
                 best_score = ai_score
                 best_method = ai_method
         
-        if best_header and best_score >= CONFIDENCE_THRESHOLDS['low']:
+        if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
             return VariableMapping(
-                variable_name=variable,
-                mapped_header=best_header,
+                variable_name=target, # In this context, the variable_name is the Header we are mapping
+                mapped_header=best_candidate, # The mapped_header is the Variable found
                 confidence_score=best_score,
                 matching_method=best_method,
                 is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
@@ -289,44 +294,32 @@ Format: SCORE: X.XX | REASON: explanation"""
         
         return None
     
-    def match_all_variables(self, variables: List[str], headers: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
-        """Match all variables to headers, including ALL Excel headers"""
+    def match_all(self, targets: List[str], candidates: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
+        """
+        Maps all targets to best candidates.
+        Structure of returned dict: {target: MappingObject}
+        """
         mappings = {}
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Combine extracted variables with predefined INPUT_VARIABLES
-        all_vars_to_match = set(variables) | set(INPUT_VARIABLES.keys())
-        total_vars = len(all_vars_to_match)
+        total_targets = len(targets)
         
-        for idx, var in enumerate(all_vars_to_match):
-            progress = (idx + 1) / total_vars
+        for idx, target in enumerate(targets):
+            progress = (idx + 1) / total_targets
             progress_bar.progress(progress)
-            status_text.text(f"Matching variable {idx + 1}/{total_vars}: {var}")
+            status_text.text(f"Mapping {target}...")
             
-            mapping = self.find_best_match(var, headers, use_ai=use_ai)
+            mapping = self.find_best_match(target, candidates, use_ai=use_ai)
             if mapping:
-                mappings[var] = mapping
+                mappings[target] = mapping
             else:
-                mappings[var] = VariableMapping(
-                    variable_name=var,
+                mappings[target] = VariableMapping(
+                    variable_name=target,
                     mapped_header="",
                     confidence_score=0.0,
                     matching_method="no_match",
-                    is_verified=False
-                )
-        
-        # Add all Excel headers that aren't mapped yet
-        mapped_headers = {m.mapped_header for m in mappings.values() if m.mapped_header}
-        for header in headers:
-            if header not in mapped_headers:
-                # Create a reverse mapping entry
-                mappings[f"_header_{header}"] = VariableMapping(
-                    variable_name=header,
-                    mapped_header=header,
-                    confidence_score=0.0,
-                    matching_method="unmapped_header",
                     is_verified=False
                 )
         
@@ -425,20 +418,26 @@ def load_excel_file(file_bytes, file_extension: str) -> Tuple[pd.DataFrame, List
         st.error(f"Error loading Excel file: {e}")
         return None, []
 
-
-def apply_mappings_to_formulas(formulas: List[Dict], mappings: Dict[str, VariableMapping]) -> List[Dict]:
-    """Replace variables in formulas with mapped headers"""
+def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict[str, str]) -> List[Dict]:
+    """
+    Replace variables in formulas with mapped Excel Headers.
+    New Logic: 
+    header_to_var_mapping format: { "Excel_Header": "VariableName" }
+    Formula: "VariableName * 2"
+    Result: "[Excel_Header] * 2"
+    """
     mapped_formulas = []
     
     for formula in formulas:
         expr = formula.get('formula_expression', '')
         
         # Replace each variable with its mapped header
-        for var_name, mapping in mappings.items():
-            if mapping.mapped_header and mapping.is_verified:
+        # We iterate over the mapping dict items (Header, Var)
+        for excel_header, var_name in header_to_var_mapping.items():
+            if excel_header and var_name:
                 # Use word boundaries to avoid partial replacements
                 pattern = r'\b' + re.escape(var_name) + r'\b'
-                expr = re.sub(pattern, f'[{mapping.mapped_header}]', expr)
+                expr = re.sub(pattern, f'[{excel_header}]', expr)
         
         mapped_formulas.append({
             'formula_name': formula.get('formula_name', ''),
@@ -447,6 +446,7 @@ def apply_mappings_to_formulas(formulas: List[Dict], mappings: Dict[str, Variabl
         })
     
     return mapped_formulas
+
 def show_calculation_results():
     """Display calculation results"""
     st.subheader("✅ Calculation Results")
@@ -520,6 +520,7 @@ def show_calculation_results():
             st.session_state.results_df = None
             st.session_state.calc_results = None
             st.rerun()
+
 def show_calculation_engine():
     """Display calculation engine interface"""
     st.subheader("🧮 Calculation Engine")
@@ -589,16 +590,15 @@ def show_calculation_engine():
         with col_btn1:
             if st.button("▶️ Run Calculations", type="primary", disabled=not selected_output_cols):
                 with st.spinner("Calculating..."):
-                    # Import calculation engine
-                    from calculation_engine import run_calculations
+                    # Import calculation engine (placeholder logic)
+                    # from calculation_engine import run_calculations
                     
-                    # Run calculations
-                    result_df, calc_results = run_calculations(
-                        calc_df,
-                        st.session_state.formulas,
-                        st.session_state.variable_mappings,
-                        selected_output_cols
-                    )
+                    # Placeholder for calculation logic
+                    # result_df, calc_results = run_calculations(...)
+                    
+                    # Mock results for demonstration
+                    result_df = calc_df.copy()
+                    calc_results = []
                     
                     # Store results
                     st.session_state.results_df = result_df
@@ -608,79 +608,6 @@ def show_calculation_engine():
                     st.success("✅ Calculations complete!")
                     st.rerun()
 
-def show_calculation_results():
-    """Display calculation results"""
-    st.subheader("✅ Calculation Results")
-    
-    # Summary statistics
-    st.markdown("### Summary")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    total_rows = len(st.session_state.results_df)
-    total_formulas = len(st.session_state.calc_results)
-    
-    avg_success = sum(r.success_rate for r in st.session_state.calc_results) / total_formulas if total_formulas > 0 else 0
-    
-    with col1:
-        st.metric("Total Rows", total_rows)
-    with col2:
-        st.metric("Formulas Applied", total_formulas)
-    with col3:
-        st.metric("Avg Success Rate", f"{avg_success:.1f}%")
-    
-    # Show detailed results
-    st.markdown("---")
-    st.markdown("### Formula Results")
-    
-    for calc_result in st.session_state.calc_results:
-        with st.expander(f"**{calc_result.formula_name}** - {calc_result.success_rate:.1f}% success"):
-            st.markdown(f"**Rows Calculated:** {calc_result.rows_calculated} / {total_rows}")
-            
-            if calc_result.errors:
-                st.markdown("**Errors:**")
-                for error in calc_result.errors:
-                    st.error(error)
-    
-    # Show results dataframe
-    st.markdown("---")
-    st.markdown("### Results Data")
-    st.dataframe(st.session_state.results_df, use_container_width=True)
-    
-    # Export options
-    st.markdown("---")
-    col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 2])
-    
-    with col_exp1:
-        # Export to Excel
-        from io import BytesIO
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            st.session_state.results_df.to_excel(writer, index=False, sheet_name='Results')
-        
-        st.download_button(
-            label="📥 Download Excel",
-            data=output.getvalue(),
-            file_name="calculation_results.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    
-    with col_exp2:
-        # Export to CSV
-        csv_data = st.session_state.results_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv_data,
-            file_name="calculation_results.csv",
-            mime="text/csv"
-        )
-    
-    with col_exp3:
-        if st.button("🔄 Start New Calculation"):
-            st.session_state.calculation_complete = False
-            st.session_state.results_df = None
-            st.session_state.calc_results = None
-            st.rerun()
 def set_custom_css():
     """Apply custom CSS"""
     st.markdown(
@@ -794,6 +721,27 @@ def set_custom_css():
         unsafe_allow_html=True
     )
 
+def get_all_master_variables():
+    """Aggregates variables from Input, Formula, and Derived sources"""
+    all_vars = set()
+    
+    # 1. Static Input Variables
+    all_vars.update(INPUT_VARIABLES.keys())
+    
+    # 2. Extracted from Formulas
+    if 'formulas' in st.session_state and st.session_state.formulas:
+        formula_vars, derived_defs = extract_variables_from_formulas(st.session_state.formulas)
+        all_vars.update(formula_vars)
+        all_vars.update(derived_defs.keys())
+    
+    # 3. Custom Formulas
+    if 'custom_formulas' in st.session_state and st.session_state.custom_formulas:
+        for cf in st.session_state.custom_formulas:
+            cf_vars, cf_derived = extract_variables_from_formulas([cf])
+            all_vars.update(cf_vars)
+            all_vars.update(cf_derived.keys())
+            
+    return sorted(list(all_vars))
 
 def main():
     st.set_page_config(
@@ -822,7 +770,6 @@ def main():
     
     st.markdown("---")
     
-    # Initialize session state
     # Initialize session state
     if 'formulas' not in st.session_state:
         st.session_state.formulas = []
@@ -862,8 +809,11 @@ def main():
     if 'excel_headers' not in st.session_state:
         st.session_state.excel_headers = []
     
-    if 'variable_mappings' not in st.session_state:
-        st.session_state.variable_mappings = {}
+    if 'header_to_var_mapping' not in st.session_state:
+        st.session_state.header_to_var_mapping = {}
+        
+    if 'removed_headers' not in st.session_state:
+        st.session_state.removed_headers = []
     
     if 'mapping_complete' not in st.session_state:
         st.session_state.mapping_complete = False
@@ -879,6 +829,7 @@ def main():
     
     if 'derived_variables' not in st.session_state:
         st.session_state.derived_variables = {}
+        
     if 'calculation_complete' not in st.session_state:
         st.session_state.calculation_complete = False
 
@@ -897,8 +848,6 @@ def main():
     if st.session_state.mapping_complete:
         show_calculation_engine()
         return
-
-    
 
     # Main content
     col1, col2 = st.columns([1, 1])
@@ -939,27 +888,30 @@ def main():
                     
                     st.subheader("⚙️ Initial Matching (Lexical + Fuzzy)")
                     
-                    st.info("🔄 **Strategy**: Uses fast lexical and fuzzy matching without AI")
-                    
-                    # Extract variables first to show user what will be matched
-                    all_variables, derived_vars = extract_variables_from_formulas(st.session_state.formulas)
-                    st.session_state.derived_variables = derived_vars
-                    
-                    # Add custom formulas to variables
-                    for custom_formula in st.session_state.custom_formulas:
-                        custom_vars, custom_derived = extract_variables_from_formulas([custom_formula])
-                        all_variables.update(custom_vars)
-                        st.session_state.derived_variables.update(custom_derived)
+                    st.info("🔄 **Strategy**: Uses fast lexical and fuzzy matching to map Excel Headers to Variables")
                     
                     if st.button("🔗 Start Automatic Mapping", type="primary", disabled=st.session_state.initial_mapping_done):
-                        with st.spinner("Analyzing variables and matching with headers..."):
+                        with st.spinner("Analyzing headers and matching with variables..."):
+                            # Get all variables (Input + Derived + Extracted)
+                            all_variables = get_all_master_variables()
+                            
                             matcher = VariableHeaderMatcher()
-                            mappings = matcher.match_all_variables(
-                                list(all_variables),
-                                headers,
-                                use_ai=False  # No AI in initial pass
+                            
+                            # Map Headers -> Variables
+                            # We pass headers as targets and variables as candidates
+                            mappings = matcher.match_all(
+                                targets=headers,
+                                candidates=all_variables,
+                                use_ai=False
                             )
-                            st.session_state.variable_mappings = mappings
+                            
+                            # Update session state with Header -> Variable mapping
+                            # Mapping Object in class: variable_name=target(Header), mapped_header=candidate(Variable)
+                            new_mapping = {}
+                            for header, mapping_obj in mappings.items():
+                                new_mapping[header] = mapping_obj.mapped_header
+                            
+                            st.session_state.header_to_var_mapping = new_mapping
                             st.session_state.initial_mapping_done = True
                             
                             # Show matching statistics
@@ -973,7 +925,7 @@ def main():
                                     method = m.matching_method.split('_')[0]
                                     method_counts[method] = method_counts.get(method, 0) + 1
                             
-                            st.success(f"✅ Mapped {mapped} out of {total} variables")
+                            st.success(f"✅ Mapped {mapped} out of {total} headers")
                             
                             if method_counts:
                                 st.markdown("**Matching Methods Used:**")
@@ -986,63 +938,38 @@ def main():
                             st.rerun()
     
     with col2:
-        st.subheader("📋 Extracted Variables")
-        st.markdown("Variables from formulas **and** AI-generated calculation steps.")
+        st.subheader("📋 Available Variables")
+        st.markdown("Variables available for mapping: **Input**, **Derived**, and **Extracted** from formulas.")
         
-        # Extract variables from formulas
-        all_variables, derived_vars = extract_variables_from_formulas(st.session_state.formulas)
-        st.session_state.derived_variables = derived_vars
-        
-        # Add custom formula variables
-        for custom_formula in st.session_state.custom_formulas:
-            custom_vars, custom_derived = extract_variables_from_formulas([custom_formula])
-            all_variables.update(custom_vars)
-            st.session_state.derived_variables.update(custom_derived)
+        # Get consolidated variable list
+        all_variables = get_all_master_variables()
         
         if all_variables:
-            # Separate into input and derived variables
-            input_vars = [v for v in all_variables if v not in st.session_state.derived_variables]
-            derived_var_list = [v for v in all_variables if v in st.session_state.derived_variables]
+            # Categorize variables for display
+            input_vars = set(INPUT_VARIABLES.keys())
+            formula_vars, derived_defs = extract_variables_from_formulas(st.session_state.formulas)
             
             var_df_data = []
-            for var in sorted(input_vars):
-                var_df_data.append({'Variable Name': var, 'Type': 'Input'})
-            for var in sorted(derived_var_list):
-                var_df_data.append({'Variable Name': var, 'Type': 'Derived'})
+            for var in sorted(all_variables):
+                v_type = "Input"
+                if var in derived_defs:
+                    v_type = "Derived"
+                elif var not in input_vars:
+                    v_type = "Extracted"
+                var_df_data.append({'Variable Name': var, 'Type': v_type})
             
             var_df = pd.DataFrame(var_df_data)
             st.dataframe(var_df, use_container_width=True, hide_index=True)
             
             # Show derived variable formulas
-            if st.session_state.derived_variables:
-                with st.expander("📐 Derived Variable Formulas", expanded=False):
-                    for var, formula in sorted(st.session_state.derived_variables.items()):
+            if derived_defs:
+                with st.expander("📐 Derived Variable Definitions", expanded=False):
+                    for var, formula in sorted(derived_defs.items()):
                         st.markdown(f"**`{var}`** = `{formula}`")
-            
-            # Show which formulas each variable appears in
-            with st.expander("🔍 Variable Usage Details", expanded=False):
-                for var in sorted(all_variables):
-                    formulas_with_var = [
-                        f.get('formula_name', 'Unknown')
-                        for f in st.session_state.formulas 
-                        if re.search(r'\b' + re.escape(var) + r'\b', 
-                                   str(f.get('formula_expression', '')) + ' ' + 
-                                   str(f.get('calculation_steps', '')))
-                    ]
-                    # Also check custom formulas
-                    for cf in st.session_state.custom_formulas:
-                        if re.search(r'\b' + re.escape(var) + r'\b', 
-                                   str(cf.get('formula_expression', ''))):
-                            formulas_with_var.append(cf.get('formula_name', 'Custom'))
-                    
-                    if formulas_with_var:
-                        var_type = "Derived" if var in st.session_state.derived_variables else "Input"
-                        st.markdown(f"**`{var}`** ({var_type}): {len(formulas_with_var)} formula(s)")
-                        st.caption(", ".join(formulas_with_var))
         else:
-            st.info("No variables detected in formulas.")
+            st.info("No variables detected.")
         
-        # Replace the entire "Add custom formula section" block with:
+        # Add custom formula section
         st.markdown("---")
         with st.expander("➕ Add Custom Formula", expanded=False):
             custom_name = st.text_input("Name", placeholder="Custom_Calc", key="cf_name")
@@ -1072,224 +999,166 @@ def main():
                 
     
     # Variable Mapping Section
-    if st.session_state.initial_mapping_done and st.session_state.variable_mappings:
+    if st.session_state.initial_mapping_done:
         st.markdown("---")
-        st.subheader("🔗 Variable to Header Mappings")
-        st.markdown("Review and edit the automatically generated mappings. You can manually adjust any mapping.")
+        st.subheader("🔗 Header to Variable Mappings")
+        st.markdown("Review and edit the mappings. Rows represent **Excel Headers**. Map them to the **Variables** used in formulas.")
         
         # Create tabs for different views
-        tab1, tab2 = st.tabs(["📊 Mappings Table", "📋 All Excel Headers"])
+        tab1, tab2 = st.tabs(["📊 Mappings Table", "📋 JSON View"])
         
         with tab1:
-            st.markdown("#### Variable Mappings")
+            st.markdown("#### Mapping Configuration")
             
             # Header row
-            # Replace the header row columns with:
-            col_h1, col_h2, col_h3, col_h4, col_h5, col_h6 = st.columns([2, 3, 1.5, 1.5, 1, 1])
+            col_h1, col_h2, col_h3 = st.columns([3, 3, 1])
             with col_h1:
-                st.markdown("**Variable**")
+                st.markdown("**Excel Header**")
             with col_h2:
-                st.markdown("**Mapped Header**")
+                st.markdown("**Mapped Variable**")
             with col_h3:
-                st.markdown("**Confidence**")
-            with col_h4:
-                st.markdown("**Method**")
-            with col_h5:
-                st.markdown("**Verified**")
-            with col_h6:
-                st.markdown("**AI Assist**")
+                st.markdown("**Actions**")
                         
             st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 2px solid #004DA8;">', unsafe_allow_html=True)
             
-            # In the tab1 section, replace the sorted_vars logic with:
-            # Separate variables and unmapped headers
-            actual_vars = [v for v in st.session_state.variable_mappings.keys() 
-                        if not v.startswith('_header_')]
-            unmapped_headers = [v for v in st.session_state.variable_mappings.keys() 
-                            if v.startswith('_header_')]
-
-            # Sort: unmapped vars first, then by confidence, then unmapped headers
-            sorted_vars = sorted(
-                actual_vars,
-                key=lambda v: (
-                    1 if st.session_state.variable_mappings[v].mapped_header else 0,
-                    -st.session_state.variable_mappings[v].confidence_score
-                )
-            ) + sorted(unmapped_headers)
+            # Get current variables for dropdown
+            current_variables = get_all_master_variables()
             
-            for var_name in sorted_vars:
-                mapping = st.session_state.variable_mappings[var_name]
+            # Filter out removed headers
+            active_headers = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
+            
+            for header in active_headers:
+                # Get current mapping for this header
+                current_var = st.session_state.header_to_var_mapping.get(header, "")
                 
-                # In the mapping table loop, replace the columns definition with:
-                col1, col2, col3, col4, col5, col6 = st.columns([2, 3, 1.5, 1.5, 1, 1])
+                col1, col2, col3 = st.columns([3, 3, 1])
 
                 with col1:
-                    st.markdown(f"`{var_name}`")
+                    st.text_input("Header", value=header, key=f"h_txt_{header}", label_visibility="collapsed", disabled=True)
                 
                 with col2:
-                    current_index = 0
-                    dropdown_options = ["(None of the following)"] + st.session_state.excel_headers
+                    # Dropdown options: (None) + all variables
+                    dropdown_options = ["(None of the following)"] + current_variables
                     
-                    if mapping.mapped_header in st.session_state.excel_headers:
-                        current_index = st.session_state.excel_headers.index(mapping.mapped_header) + 1
+                    # Determine index
+                    try:
+                        idx = dropdown_options.index(current_var)
+                    except ValueError:
+                        idx = 0
                     
-                    new_header = st.selectbox(
-                        "Header",
+                    new_var = st.selectbox(
+                        "Variable",
                         options=dropdown_options,
-                        index=current_index,
-                        key=f"header_{var_name}",
+                        index=idx,
+                        key=f"var_select_{header}",
                         label_visibility="collapsed"
                     )
                     
                     # Update mapping if changed
-                    # Treat "(None of the above)" as empty
-                    if new_header == "(None of the above)":
-                        new_header = ""
+                    # Treat "(None of the following)" as empty string
+                    final_var = "" if new_var == "(None of the following)" else new_var
                     
-                    if new_header != mapping.mapped_header:
-                        mapping.mapped_header = new_header
-                        mapping.confidence_score = 1.0 if new_header else 0.0
-                        mapping.matching_method = "manual" if new_header else "none_selected"
-                        mapping.is_verified = True if new_header else False
+                    if final_var != current_var:
+                        st.session_state.header_to_var_mapping[header] = final_var
                 
                 with col3:
-                    # Confidence badge
-                    if mapping.confidence_score >= CONFIDENCE_THRESHOLDS['high']:
-                        conf_class = "confidence-high"
-                        conf_label = "High"
-                    elif mapping.confidence_score >= CONFIDENCE_THRESHOLDS['medium']:
-                        conf_class = "confidence-medium"
-                        conf_label = "Medium"
-                    elif mapping.confidence_score >= CONFIDENCE_THRESHOLDS['low']:
-                        conf_class = "confidence-low"
-                        conf_label = "Low"
-                    else:
-                        conf_class = "confidence-low"
-                        conf_label = "None"
-                    
-                    st.markdown(
-                        f'<span class="{conf_class}">{conf_label} ({mapping.confidence_score:.2f})</span>',
-                        unsafe_allow_html=True
-                    )
-                
-                with col4:
-                    st.markdown(f"*{mapping.matching_method[:20]}...*" if len(mapping.matching_method) > 20 else f"*{mapping.matching_method}*")
-                
-                with col5:
-                    verified = st.checkbox(
-                        "Verified",
-                        value=mapping.is_verified,
-                        key=f"verify_{var_name}",
-                        label_visibility="collapsed"
-                    )
-                    mapping.is_verified = verified
-                with col6:
-                    is_header = var_name.startswith('_header_')
-                    if not is_header:
-                        ai_selected = st.checkbox(
-                            "AI",
-                            value=var_name in st.session_state.get('ai_assist_vars', []),
-                            key=f"ai_{var_name}",
-                            label_visibility="collapsed",
-                            help="Select for AI assist"
-                        )
-                        if ai_selected and var_name not in st.session_state.get('ai_assist_vars', []):
-                            if 'ai_assist_vars' not in st.session_state:
-                                st.session_state.ai_assist_vars = []
-                            st.session_state.ai_assist_vars.append(var_name)
-                        elif not ai_selected and var_name in st.session_state.get('ai_assist_vars', []):
-                            st.session_state.ai_assist_vars.remove(var_name)
+                    # Remove Button
+                    if st.button("🗑️", key=f"remove_{header}", help="Remove this column from calculations"):
+                        st.session_state.removed_headers.append(header)
+                        # Also remove from mapping to clean up
+                        if header in st.session_state.header_to_var_mapping:
+                            del st.session_state.header_to_var_mapping[header]
+                        st.rerun()
                                 
                 st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
         
         with tab2:
-            st.markdown("#### All Excel Headers (Mapped & Unmapped)")
+            st.markdown("#### Current Mappings (JSON)")
             
-            # Get mapped headers
-            mapped_headers = {m.mapped_header for m in st.session_state.variable_mappings.values() if m.mapped_header}
+            # Filter out empty mappings
+            active_mapping = {
+                h: v for h, v in st.session_state.header_to_var_mapping.items() 
+                if v and h not in st.session_state.removed_headers
+            }
             
-            # Show all headers with status
-            headers_df_data = []
-            for header in st.session_state.excel_headers:
-                if header in mapped_headers:
-                    # Find which variable(s) map to this header
-                    vars_mapped = [v for v, m in st.session_state.variable_mappings.items() if m.mapped_header == header]
-                    status = f"Mapped to: {', '.join(vars_mapped)}"
-                    status_class = "✅"
-                else:
-                    status = "Not mapped to any variable"
-                    status_class = "⚪"
-                
-                headers_df_data.append({
-                    "Status": status_class,
-                    "Header Name": header,
-                    "Mapping Info": status
-                })
+            st.json(active_mapping)
             
-            headers_df = pd.DataFrame(headers_df_data)
-            st.dataframe(headers_df, use_container_width=True, hide_index=True)
+            # Provide download for this JSON
+            st.download_button(
+                label="📥 Download Mapping JSON",
+                data=json.dumps(active_mapping, indent=2),
+                file_name="header_to_variable_mapping.json",
+                mime="application/json"
+            )
             
-            unmapped_count = len([h for h in st.session_state.excel_headers if h not in mapped_headers])
-            st.info(f"📊 **{unmapped_count}** out of **{len(st.session_state.excel_headers)}** headers are currently unmapped")
+            # Show removed headers
+            if st.session_state.removed_headers:
+                st.markdown("**Removed Headers:**")
+                st.write(st.session_state.removed_headers)
         
         # Summary statistics
         st.markdown("---")
-        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+        col_stat1, col_stat2, col_stat3 = st.columns(3)
         
-        total_vars = len(st.session_state.variable_mappings)
-        mapped_vars = len([m for m in st.session_state.variable_mappings.values() if m.mapped_header])
-        verified_vars = len([m for m in st.session_state.variable_mappings.values() if m.is_verified])
-        high_conf_vars = len([m for m in st.session_state.variable_mappings.values() if m.confidence_score >= CONFIDENCE_THRESHOLDS['high']])
+        total_headers = len(st.session_state.excel_headers)
+        active_count = len([h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers])
+        mapped_count = len([v for v in st.session_state.header_to_var_mapping.values() if v])
         
         with col_stat1:
-            st.metric("Total Variables", total_vars)
+            st.metric("Total Headers", total_headers)
         with col_stat2:
-            st.metric("Mapped", mapped_vars)
+            st.metric("Active Columns", active_count)
         with col_stat3:
-            st.metric("Verified", verified_vars)
-        with col_stat4:
-            st.metric("High Confidence", high_conf_vars)
+            st.metric("Mapped Variables", mapped_count)
         
-        # Replace the entire "AI Enhancement Section" with:
+        # AI Enhancement Section
         st.markdown("---")
         st.subheader("🤖 AI-Powered Enhancement")
 
-        if 'ai_assist_vars' not in st.session_state:
-            st.session_state.ai_assist_vars = []
+        if 'ai_assist_headers' not in st.session_state:
+            st.session_state.ai_assist_headers = []
 
-        # Multiselect for choosing variables for AI assist
-        all_var_names = sorted([v for v in st.session_state.variable_mappings.keys() 
-                                if not v.startswith('_header_')])
+        # Multiselect for choosing headers for AI assist
+        active_headers_list = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
         selected_for_ai = st.multiselect(
-            "Select variables for AI semantic matching:",
-            options=all_var_names,
-            default=st.session_state.ai_assist_vars,
-            help="Choose variables where you want AI to find better matches"
+            "Select headers for AI semantic matching:",
+            options=active_headers_list,
+            default=st.session_state.ai_assist_headers,
+            help="Choose headers where you want AI to find better variable matches"
         )
-        st.session_state.ai_assist_vars = selected_for_ai
+        st.session_state.ai_assist_headers = selected_for_ai
 
         if selected_for_ai:
-            if st.button("🤖 Run AI Assist for Selected Variables", type="secondary", disabled=MOCK_MODE):
-                with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} variables..."):
+            if st.button("🤖 Run AI Assist for Selected Headers", type="secondary", disabled=MOCK_MODE):
+                with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers..."):
                     matcher = VariableHeaderMatcher()
+                    # Get current variables
+                    current_variables = get_all_master_variables()
+                    
                     improved_count = 0
-                    for var in selected_for_ai:
-                        if var in st.session_state.variable_mappings:
-                            improved_mapping = matcher.find_best_match(
-                                var, 
-                                st.session_state.excel_headers, 
-                                use_ai=True
-                            )
-                            if improved_mapping and improved_mapping.confidence_score > \
-                            st.session_state.variable_mappings[var].confidence_score:
-                                st.session_state.variable_mappings[var] = improved_mapping
+                    for header in selected_for_ai:
+                        # Use match_all with single target or find_best_match directly
+                        # Here we use find_best_match(Header, Variables)
+                        improved_mapping = matcher.find_best_match(
+                            header, 
+                            current_variables, 
+                            use_ai=True
+                        )
+                        if improved_mapping and improved_mapping.mapped_header:
+                            # Check if score is better than existing (conceptually)
+                            # Since we are using AI as an 'assist', we just overwrite if confidence is decent
+                            # or simply update. 
+                            # For simplicity, if AI found a match, we update it.
+                            current_val = st.session_state.header_to_var_mapping.get(header)
+                            if current_val != improved_mapping.mapped_header:
+                                st.session_state.header_to_var_mapping[header] = improved_mapping.mapped_header
                                 improved_count += 1
                     
-                    st.success(f"✅ AI improved {improved_count} out of {len(selected_for_ai)} mappings!")
-                    st.session_state.ai_assist_vars = []
+                    st.success(f"✅ AI updated {improved_count} mappings!")
+                    st.session_state.ai_assist_headers = []
                     st.rerun()
         else:
-            st.info("💡 Select variables above and click the AI assist button to improve their mappings")
+            st.info("💡 Select headers above and click the AI assist button to improve their mappings")
         
         # Proceed button
         st.markdown("---")
@@ -1297,33 +1166,26 @@ def main():
         
         with col_btn1:
             if st.button("✅ Confirm Mappings & View Formulas", type="primary"):
-                # Check if all variables are mapped
-                unmapped = [v for v, m in st.session_state.variable_mappings.items() if not m.mapped_header]
+                # Check for unmapped active headers
+                unmapped = [h for h in active_headers if not st.session_state.header_to_var_mapping.get(h)]
                 
                 if unmapped:
-                    st.warning(f"⚠️ {len(unmapped)} variables are still unmapped: {', '.join(unmapped[:5])}{'...' if len(unmapped) > 5 else ''}")
-                    st.info("You can proceed anyway, but unmapped variables won't be replaced in formulas.")
+                    st.warning(f"⚠️ {len(unmapped)} headers are unmapped: {', '.join(unmapped[:5])}{'...' if len(unmapped) > 5 else ''}")
                 
                 st.session_state.mapping_complete = True
                 st.success("✅ Mappings confirmed!")
                 st.rerun()
         
         with col_btn2:
-            # Export mappings
-            mapping_export = {
-                var: {
-                    'mapped_header': m.mapped_header,
-                    'confidence': m.confidence_score,
-                    'method': m.matching_method,
-                    'verified': m.is_verified
-                }
-                for var, m in st.session_state.variable_mappings.items()
+             # Export current view mapping
+            active_mapping = {
+                h: v for h, v in st.session_state.header_to_var_mapping.items() 
+                if v and h not in st.session_state.removed_headers
             }
-            
             st.download_button(
-                label="📥 Export Mappings",
-                data=json.dumps(mapping_export, indent=2),
-                file_name="variable_mappings.json",
+                label="📥 Export Final Mappings",
+                data=json.dumps(active_mapping, indent=2),
+                file_name="final_mappings.json",
                 mime="application/json"
             )
     
@@ -1331,11 +1193,13 @@ def main():
     if st.session_state.mapping_complete:
         st.markdown("---")
         st.subheader("📐 Formulas with Mapped Headers")
-        st.markdown("Here are your formulas with variables replaced by the mapped Excel headers (shown in brackets).")
+        st.markdown("Variables in formulas have been replaced by the mapped Excel headers (shown in brackets).")
         
+        # Pass the header->var mapping to the apply function
+        # Note: apply_mappings_to_formulas expects {Header: Var} logic now
         mapped_formulas = apply_mappings_to_formulas(
             st.session_state.formulas,
-            st.session_state.variable_mappings
+            st.session_state.header_to_var_mapping
         )
         
         for formula in mapped_formulas:
@@ -1373,18 +1237,13 @@ def main():
             )
         
         with col_exp3:
-            # After the "Confirm Mappings & View Formulas" section, add:
-            if st.session_state.mapping_complete:
-                st.markdown("---")
-                if st.button("➡️ Proceed to Calculations", type="primary", key="goto_calc"):
-                    # Import and run calculation engine
-                    try:
-                        import calculation_engine
-                        calculation_engine.main()
-                    except ImportError:
-                        st.error("❌ calculation_engine.py not found. Please ensure it's in the same directory.")
-                    except Exception as e:
-                        st.error(f"❌ Error loading calculation engine: {e}")
+            if st.button("➡️ Proceed to Calculations", type="primary", key="goto_calc"):
+                try:
+                    # Logic to switch to calculation view
+                    st.session_state.calculation_view = True
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
     
     # Footer
     st.markdown("---")
