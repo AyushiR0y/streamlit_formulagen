@@ -250,94 +250,131 @@ class VariableHeaderMatcher:
             
         return combined, method
     
-    def semantic_similarity_ai(self, var: str, header: str) -> Tuple[float, str]:
-        """Calculate semantic similarity using AI"""
+    def semantic_similarity_ai(self, header: str, variables: List[str]) -> Tuple[Optional[str], str]:
+        """
+        Uses AI to compare one header against a list of variables and picks the best match.
+        
+        Returns:
+            (best_variable_name, explanation_string)
+            Returns (None, ...) if AI finds no match.
+        """
         if MOCK_MODE or not client:
-            return 0.0, "AI unavailable"
+            return None, "AI unavailable"
         
         try:
-            prompt = f"""Compare these two terms and rate their semantic similarity on a scale of 0.0 to 1.0:
+            # Format the variable list for the prompt
+            var_list_display = "\n".join([f"- {v}" for v in variables])
 
-                Variable: "{var}"
-                Header: "{header}"
+            prompt = f"""You are an expert in Insurance and Financial Data Mapping.
 
-                Consider:
-                - Do they refer to the same concept?
-                - Are they synonyms or related terms?
-                - In an insurance/financial context, would they represent the same data?
+            I have an Excel Header: "{header}"
 
-                Respond with ONLY a number between 0.0 and 1.0, followed by a brief explanation.
-                Format: SCORE: X.XX | REASON: explanation"""
+            Here is the list of available Variables:
+            {var_list_display}
+
+            Task: Identify the variable from the list that best matches the header.
+            - Match based on concept, synonyms (e.g., 'Amt' -> 'Amount'), or abbreviations.
+            - If none of the variables are a good match, return "None".
+            
+            Respond in strict JSON format with keys: "best_match", "confidence" (0.0-1.0), "reason".
+            Example: {{"best_match": "TOTAL_PREMIUM", "confidence": 0.9, "reason": "Direct synonym match"}}"""
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
+                max_tokens=300,
                 temperature=0.1
             )
             
             response_text = response.choices[0].message.content.strip()
             
-            # Parse response
-            score_match = re.search(r'SCORE:\s*([0-9]*\.?[0-9]+)', response_text, re.IGNORECASE)
-            reason_match = re.search(r'REASON:\s*(.+)', response_text, re.IGNORECASE | re.DOTALL)
-            
-            score = float(score_match.group(1)) if score_match else 0.0
-            reason = reason_match.group(1).strip() if reason_match else "No explanation provided"
-            
-            return min(score, 1.0), f"semantic_ai ({reason[:50]}...)"
-            
+            # Extract JSON from response (handles potential markdown code blocks)
+            try:
+                # Find the first object-like structure
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    import json # Local import if not global
+                    data = json.loads(json_match.group())
+                    best_var = data.get("best_match")
+                    confidence = float(data.get("confidence", 0.0))
+                    reason = data.get("reason", "")
+                    
+                    # Validate if returned variable is actually in the list
+                    if best_var == "None" or best_var not in variables:
+                        return None, "AI: No suitable match found"
+                    
+                    return best_var, f"AI ({confidence:.2f}): {reason[:40]}..."
+                else:
+                    return None, "AI: Invalid JSON response"
+            except Exception:
+                return None, "AI: Parse Error"
+                
         except Exception as e:
-            st.warning(f"AI semantic matching failed: {e}")
-            return 0.0, f"AI_error: {str(e)}"
+            return None, f"API Error: {str(e)}"
     
     def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
         """
         Finds the best matching candidate for the target.
-        target = Excel Header (what we're trying to map)
-        candidates = List of Variables (what we're mapping to)
+        Target: Excel Header (what we're trying to map)
+        Candidates: List of Variables (what we're mapping to)
         """
         best_score = 0.0
         best_candidate = None
         best_method = "no_match"
         
-        # Calculate scores for all candidates
-        candidate_scores = []
-        
+        # 1. Calculate Fuzzy and Lexical Scores for all candidates
+        # We do this regardless of AI to have a fallback if AI fails
         for candidate in candidates:
-            # Get combined score from lexical + fuzzy
-            combined_score, method = self.calculate_combined_score(candidate, target)
-            candidate_scores.append((candidate, combined_score, method))
-        
-        # Sort by score descending
-        candidate_scores.sort(key=lambda x: x[1], reverse=True)
-        
-        # Get best match
-        if candidate_scores and candidate_scores[0][1] > 0:
-            best_candidate = candidate_scores[0][0]
-            best_score = candidate_scores[0][1]
-            best_method = candidate_scores[0][2]
-        
-        # AI semantic matching (only if enabled and we have a reasonable candidate)
-        if use_ai and best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
-            ai_score, ai_method = self.semantic_similarity_ai(best_candidate, target)
+            # Get scores from class methods
+            lex_score = self.lexical_similarity(target, candidate)
+            fuzzy_score = self.fuzzy_similarity(target, candidate)
             
-            if ai_score > best_score:
-                best_score = ai_score
-                best_method = ai_method
+            # Combine scores (Weighted Average favoring Lexical for exactness)
+            # You can adjust weights if needed, but 0.6 Fuzzy / 0.4 Lexical is a good balance
+            combined_score = (lex_score * 0.4) + (fuzzy_score * 0.6)
+            
+            if combined_score > best_score:
+                best_score = combined_score
+                best_candidate = candidate
+                best_method = "fuzzy_lexical"
         
-        # Only return if score meets minimum threshold
+        # 2. AI Semantic Matching (Overrides fuzzy if enabled)
+        # The AI function takes (Header, List_of_Variables) and returns the best match directly
+        if use_ai and candidates:
+            try:
+                ai_selected_var, ai_explanation = self.semantic_similarity_ai(target, candidates)
+                
+                # If AI successfully found a match, override the fuzzy match
+                if ai_selected_var:
+                    best_candidate = ai_selected_var
+                    
+                    # Extract confidence from AI explanation if available (e.g., "0.95"), else default high
+                    ai_confidence = 0.95
+                    if "0." in ai_explanation:
+                        import re
+                        conf_match = re.search(r'([0-9]+\.[0-9]+)', ai_explanation)
+                        if conf_match:
+                            ai_confidence = float(conf_match.group(1))
+                    
+                    best_score = ai_confidence
+                    best_method = ai_explanation # Use the AI's explanation as the method string
+            
+            except Exception as e:
+                # If AI fails, we silently fallback to the fuzzy match found above
+                pass
+        
+        # 3. Final Threshold Check
+        # Only return mapping if score meets minimum threshold (prevents bad matches like 'N')
         if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
             return VariableMapping(
-                variable_name=target,  # Excel Header
-                mapped_header=best_candidate,  # Matched Variable
+                variable_name=target,          # Excel Header
+                mapped_header=best_candidate,     # Best Variable found
                 confidence_score=best_score,
                 matching_method=best_method,
                 is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
             )
         
         return None
-    
     def match_all(self, targets: List[str], candidates: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
         """
         Maps all targets to best candidates.
@@ -1173,7 +1210,6 @@ def main():
             st.metric("Mapped Variables", mapped_count)
         
         # AI Enhancement Section
-        st.markdown("---")
         st.subheader("🤖 AI-Powered Enhancement")
 
         # Initialize session state for AI assist if not exists
@@ -1200,7 +1236,8 @@ def main():
             col_ai1, col_ai2 = st.columns([2, 3])
             
             with col_ai1:
-                if st.button("🤖 Run AI Assist", type="secondary", disabled=MOCK_MODE):
+                # Apply custom class 'ai-assist-btn' for distinct styling
+                if st.button("🤖 Run AI Assist", type="primary", key="ai_assist_btn", disabled=MOCK_MODE):
                     with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers..."):
                         matcher = VariableHeaderMatcher()
                         current_variables = st.session_state.selected_variables_for_mapping if st.session_state.selected_variables_for_mapping else get_all_master_variables()
@@ -1236,20 +1273,19 @@ def main():
                         else:
                             st.info("ℹ️ No improvements found. Current mappings are optimal.")
                         
-                        # Force rerun to show updated mappings
                         st.rerun()
             
             with col_ai2:
                 st.info(f"💡 {len(selected_for_ai)} header(s) selected for AI enhancement")
         else:
-            st.info("💡 Select headers above and click the AI assist button to improve their mappings")
+            st.info("💡 Select headers above and click AI assist button to improve their mappings")
         
-        # Proceed button
+        # --- Confirm & Export Section ---
         st.markdown("---")
-        col_btn1, col_btn2 = st.columns([1, 1])
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1]) # Changed to 3 columns for JSON and CSV
         
         with col_btn1:
-            if st.button("✅ Confirm Mappings & View Formulas", type="primary"):
+            if st.button("✅ Confirm Mappings", type="primary", key="confirm_mappings_btn"):
                 # Check for unmapped active headers
                 unmapped = [h for h in active_headers if not st.session_state.header_to_var_mapping.get(h)]
                 
@@ -1261,23 +1297,34 @@ def main():
                 st.rerun()
         
         with col_btn2:
-             # Export current view mapping
+            # Export JSON
             active_mapping = {
                 h: v for h, v in st.session_state.header_to_var_mapping.items() 
                 if v and h not in st.session_state.removed_headers
             }
             st.download_button(
-                label="📥 Export Final Mappings",
+                label="📥 Export JSON",
                 data=json.dumps(active_mapping, indent=2),
                 file_name="final_mappings.json",
                 mime="application/json"
+            )
+
+        with col_btn3:
+            # Export CSV
+            df_mapping = pd.DataFrame(list(active_mapping.items()), columns=['Excel_Header', 'Mapped_Variable'])
+            csv_data = df_mapping.to_csv(index=False)
+            st.download_button(
+                label="📥 Export CSV",
+                data=csv_data,
+                file_name="final_mappings.csv",
+                mime="text/csv"
             )
     
     # Show mapped formulas
     if st.session_state.mapping_complete:
         st.markdown("---")
         st.subheader("📐 Formulas with Mapped Headers")
-        st.markdown("Variables in formulas have been replaced by the mapped Excel headers (shown in brackets).")
+        st.markdown("Variables in formulas have been replaced by mapped Excel headers (shown in brackets).")
         
         # Pass the header->var mapping to the apply function
         mapped_formulas = apply_mappings_to_formulas(
@@ -1303,29 +1350,26 @@ def main():
         
         with col_exp1:
             st.download_button(
-                label="📥 Download Mapped Formulas (JSON)",
+                label="📥 Download Formulas (JSON)",
                 data=json.dumps(mapped_formulas, indent=2),
                 file_name="mapped_formulas.json",
                 mime="application/json"
             )
         
         with col_exp2:
-            # CSV export
-            csv_data = pd.DataFrame(mapped_formulas).to_csv(index=False)
+            csv_formula_data = pd.DataFrame(mapped_formulas).to_csv(index=False)
             st.download_button(
-                label="📥 Download Mapped Formulas (CSV)",
-                data=csv_data,
+                label="📥 Download Formulas (CSV)",
+                data=csv_formula_data,
                 file_name="mapped_formulas.csv",
                 mime="text/csv"
             )
         
         with col_exp3:
-            # Use st.switch_page to go to the specific file in pages folder
             if st.button("➡️ Proceed to Calculations", type="primary", key="goto_calc"):
                 st.switch_page("pages/3_Calculator.py")
     
     # Footer
-    st.markdown("---")
     st.markdown(
         """
         <div style="text-align: center; margin-top: 50px; color: #7f8c8d; font-size: 0.9em;">
@@ -1334,7 +1378,3 @@ def main():
         """,
         unsafe_allow_html=True
     )
-
-
-if __name__ == "__main__":
-    main()

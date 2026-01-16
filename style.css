@@ -532,6 +532,19 @@ div.stButton > button[key="start_mapping_btn"] {
     border-radius: 4px;
     font-weight: 600;
 }
+/* AI Assist Button - Distinct Purple Gradient */
+.ai-assist-btn > button {
+    background: linear-gradient(135deg, #8e44ad 0%, #c77dff 100%) !important;
+    border: 2px solid #5628b0 !important;
+    color: white !important;
+    font-weight: 700;
+}
+
+.ai-assist-btn > button:hover {
+    background: linear-gradient(135deg, #5628b0 0%, #8e44ad 100%) !important;
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 6px 18px rgba(142, 68, 173, 0.4);
+}
 
 .header-unmapped {
     background-color: #e8f4f8 !important;
