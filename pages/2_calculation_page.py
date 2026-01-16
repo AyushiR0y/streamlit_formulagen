@@ -110,7 +110,6 @@ class VariableHeaderMatcher:
         
     def normalize_text(self, text: str) -> str:
         """Normalize text for comparison"""
-        # Convert to lowercase, remove special chars, collapse whitespace
         text = text.lower()
         text = re.sub(r'[^a-z0-9\s]', ' ', text)
         text = re.sub(r'\s+', ' ', text)
@@ -124,6 +123,9 @@ class VariableHeaderMatcher:
             'fup': 'first unpaid premium',
             'gsv': 'guaranteed surrender value',
             'ssv': 'special surrender value',
+            'ssv1': 'special surrender value 1',
+            'ssv2': 'special surrender value 2',
+            'ssv3': 'special surrender value 3',
             'rop': 'return of premium',
             'ap': 'annual premium',
             'pp': 'premium paid',
@@ -147,7 +149,6 @@ class VariableHeaderMatcher:
         
         text_lower = text.lower()
         for abbr, full in abbreviations.items():
-            # Replace whole word abbreviations
             text_lower = re.sub(r'\b' + abbr + r'\b', full, text_lower)
         
         return text_lower
@@ -187,7 +188,7 @@ class VariableHeaderMatcher:
         return 0.0
     
     def fuzzy_similarity(self, var: str, header: str) -> float:
-        """Calculate fuzzy string similarity with Strict Length Penalty"""
+        """Calculate fuzzy string similarity with improved length penalty"""
         var_norm = self.normalize_text(var)
         header_norm = self.normalize_text(header)
         
@@ -204,23 +205,51 @@ class VariableHeaderMatcher:
         # Weighted average favoring token-based matching
         score = (ratio * 0.2 + partial_ratio * 0.2 + token_sort_ratio * 0.3 + token_set_ratio * 0.3)
         
-        # --- STRICT LENGTH PENALTY ---
-        # If strings are vastly different lengths, they are likely not a match
-        len_diff = abs(len(var) - len(header))
+        # --- IMPROVED LENGTH PENALTY ---
+        # Penalize matches where one string is much shorter than the other
+        # This prevents single letters like "N" from matching everything
         
-        # Case 1: Very short variable (e.g. "N") matching a long header (e.g. "Net Premium")
-        if len(var) <= 2 and len(header) > 6:
-            score = score * 0.05  # 95% penalty
-            
-        # Case 2: General large size difference
+        len_var = len(var_expanded)
+        len_header = len(header_expanded)
+        len_diff = abs(len_var - len_header)
+        
+        # Special case: Single character variables should ONLY match single character headers
+        if len_var == 1 or len_header == 1:
+            if len_var != len_header:
+                score = score * 0.01  # 99% penalty
+            return score
+        
+        # Very short variables (2-3 chars) need exact or very close matches
+        if len_var <= 3 or len_header <= 3:
+            if len_diff > 2:
+                score = score * 0.1  # 90% penalty
+            return score
+        
+        # General length difference penalties
+        if len_diff > 15:
+            score = score * 0.3  # 70% penalty
         elif len_diff > 10:
             score = score * 0.5  # 50% penalty
-        
-        # Case 3: Moderate size difference
         elif len_diff > 5:
             score = score * 0.8  # 20% penalty
             
         return score
+    
+    def calculate_combined_score(self, var: str, header: str) -> Tuple[float, str]:
+        """Calculate combined score from all non-AI methods"""
+        lex_score = self.lexical_similarity(var, header)
+        fuzzy_score = self.fuzzy_similarity(var, header)
+        
+        # Weight lexical matching more heavily as it's more reliable
+        combined = (lex_score * 0.6) + (fuzzy_score * 0.4)
+        
+        # Determine which method contributed most
+        if lex_score > fuzzy_score:
+            method = "lexical"
+        else:
+            method = "fuzzy"
+            
+        return combined, method
     
     def semantic_similarity_ai(self, var: str, header: str) -> Tuple[float, str]:
         """Calculate semantic similarity using AI"""
@@ -230,16 +259,16 @@ class VariableHeaderMatcher:
         try:
             prompt = f"""Compare these two terms and rate their semantic similarity on a scale of 0.0 to 1.0:
 
-Variable: "{var}"
-Header: "{header}"
+                Variable: "{var}"
+                Header: "{header}"
 
-Consider:
-- Do they refer to the same concept?
-- Are they synonyms or related terms?
-- In an insurance/financial context, would they represent the same data?
+                Consider:
+                - Do they refer to the same concept?
+                - Are they synonyms or related terms?
+                - In an insurance/financial context, would they represent the same data?
 
-Respond with ONLY a number between 0.0 and 1.0, followed by a brief explanation.
-Format: SCORE: X.XX | REASON: explanation"""
+                Respond with ONLY a number between 0.0 and 1.0, followed by a brief explanation.
+                Format: SCORE: X.XX | REASON: explanation"""
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
@@ -262,6 +291,88 @@ Format: SCORE: X.XX | REASON: explanation"""
         except Exception as e:
             st.warning(f"AI semantic matching failed: {e}")
             return 0.0, f"AI_error: {str(e)}"
+    
+    def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
+        """
+        Finds the best matching candidate for the target.
+        target = Excel Header (what we're trying to map)
+        candidates = List of Variables (what we're mapping to)
+        """
+        best_score = 0.0
+        best_candidate = None
+        best_method = "no_match"
+        
+        # Calculate scores for all candidates
+        candidate_scores = []
+        
+        for candidate in candidates:
+            # Get combined score from lexical + fuzzy
+            combined_score, method = self.calculate_combined_score(candidate, target)
+            candidate_scores.append((candidate, combined_score, method))
+        
+        # Sort by score descending
+        candidate_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        # Get best match
+        if candidate_scores and candidate_scores[0][1] > 0:
+            best_candidate = candidate_scores[0][0]
+            best_score = candidate_scores[0][1]
+            best_method = candidate_scores[0][2]
+        
+        # AI semantic matching (only if enabled and we have a reasonable candidate)
+        if use_ai and best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
+            ai_score, ai_method = self.semantic_similarity_ai(best_candidate, target)
+            
+            if ai_score > best_score:
+                best_score = ai_score
+                best_method = ai_method
+        
+        # Only return if score meets minimum threshold
+        if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
+            return VariableMapping(
+                variable_name=target,  # Excel Header
+                mapped_header=best_candidate,  # Matched Variable
+                confidence_score=best_score,
+                matching_method=best_method,
+                is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
+            )
+        
+        return None
+    
+    def match_all(self, targets: List[str], candidates: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
+        """
+        Maps all targets to best candidates.
+        Structure of returned dict: {target: MappingObject}
+        """
+        mappings = {}
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        total_targets = len(targets)
+        
+        for idx, target in enumerate(targets):
+            progress = (idx + 1) / total_targets
+            progress_bar.progress(progress)
+            status_text.text(f"Mapping {target}...")
+            
+            mapping = self.find_best_match(target, candidates, use_ai=use_ai)
+            if mapping:
+                mappings[target] = mapping
+            else:
+                # If no good match found, create an empty mapping
+                mappings[target] = VariableMapping(
+                    variable_name=target,
+                    mapped_header="",
+                    confidence_score=0.0,
+                    matching_method="no_match",
+                    is_verified=False
+                )
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        return mappings
     
     def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
         """
@@ -714,7 +825,6 @@ def main():
         col_restore1, col_restore2 = st.columns(2)
         
         with col_restore1:
-            st.markdown("**Upload Formulas JSON:**")
             uploaded_json = st.file_uploader("Upload previously exported mappings JSON", type=['json'], key="restore_json")
             if uploaded_json:
                 try:
@@ -820,7 +930,13 @@ def main():
                     st.subheader("🛠️ Filter Variables for Mapping")
                     st.markdown("Deselect variables that are **not** relevant to this specific Excel file.")
                     
+                    # When getting master variables for mapping
                     all_master_vars = get_all_master_variables()
+
+                    # Filter out single-letter variables unless explicitly selected
+                    # These require manual mapping due to ambiguity
+                    single_letter_vars = ['N', 'M', 'X', 'Y', 'Z']
+                    default_vars = [v for v in all_master_vars if v not in single_letter_vars]
                     
                     # Default to selecting all variables if it's a fresh file upload
                     if st.session_state.selected_variables_for_mapping == [] or \
@@ -1064,43 +1180,76 @@ def main():
         st.markdown("---")
         st.subheader("🤖 AI-Powered Enhancement")
 
+        # Initialize session state for AI assist if not exists
         if 'ai_assist_headers' not in st.session_state:
             st.session_state.ai_assist_headers = []
 
         # Multiselect for choosing headers for AI assist
         active_headers_list = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
+
+        # Use on_change callback to persist selection
+        def update_ai_headers():
+            st.session_state.ai_assist_headers = st.session_state.ai_header_select
+
         selected_for_ai = st.multiselect(
             "Select headers for AI semantic matching:",
             options=active_headers_list,
             default=st.session_state.ai_assist_headers,
+            key="ai_header_select",
+            on_change=update_ai_headers,
             help="Choose headers where you want AI to find better variable matches"
         )
-        st.session_state.ai_assist_headers = selected_for_ai
 
         if selected_for_ai:
-            if st.button("🤖 Run AI Assist for Selected Headers", type="secondary", disabled=MOCK_MODE):
-                with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers..."):
-                    matcher = VariableHeaderMatcher()
-                    current_variables = st.session_state.selected_variables_for_mapping if st.session_state.selected_variables_for_mapping else get_all_master_variables()
-                    
-                    improved_count = 0
-                    for header in selected_for_ai:
-                        improved_mapping = matcher.find_best_match(
-                            header, 
-                            current_variables, 
-                            use_ai=True
-                        )
-                        if improved_mapping and improved_mapping.mapped_header:
-                            current_val = st.session_state.header_to_var_mapping.get(header)
-                            if current_val != improved_mapping.mapped_header:
-                                st.session_state.header_to_var_mapping[header] = improved_mapping.mapped_header
-                                improved_count += 1
-                    
-                    st.success(f"✅ AI updated {improved_count} mappings!")
-                    st.session_state.ai_assist_headers = []
-                    st.rerun()
+            col_ai1, col_ai2 = st.columns([2, 3])
+            
+            with col_ai1:
+                if st.button("🤖 Run AI Assist", type="secondary", disabled=MOCK_MODE):
+                    with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers..."):
+                        matcher = VariableHeaderMatcher()
+                        current_variables = st.session_state.selected_variables_for_mapping if st.session_state.selected_variables_for_mapping else get_all_master_variables()
+                        
+                        improved_count = 0
+                        changes_made = []
+                        
+                        for header in selected_for_ai:
+                            improved_mapping = matcher.find_best_match(
+                                header, 
+                                current_variables, 
+                                use_ai=True
+                            )
+                            if improved_mapping and improved_mapping.mapped_header:
+                                current_val = st.session_state.header_to_var_mapping.get(header, "")
+                                new_val = improved_mapping.mapped_header
+                                
+                                if current_val != new_val:
+                                    st.session_state.header_to_var_mapping[header] = new_val
+                                    improved_count += 1
+                                    changes_made.append(f"**{header}**: `{current_val or '(None)'}` → `{new_val}` (confidence: {improved_mapping.confidence_score:.2f})")
+                        
+                        # Clear selection after processing
+                        st.session_state.ai_assist_headers = []
+                        
+                        if improved_count > 0:
+                            st.success(f"✅ AI updated {improved_count} mapping(s)!")
+                            
+                            # Show what changed in an expander
+                            with st.expander("📝 View Changes", expanded=True):
+                                for change in changes_made:
+                                    st.markdown(change)
+                        else:
+                            st.info("ℹ️ No improvements found. Current mappings are optimal.")
+                        
+                        # Force rerun to show updated mappings
+                        st.rerun()
+            
+            with col_ai2:
+                st.info(f"💡 {len(selected_for_ai)} header(s) selected for AI enhancement")
         else:
             st.info("💡 Select headers above and click the AI assist button to improve their mappings")
+
+if MOCK_MODE:
+    st.warning("⚠️ AI assist is disabled. Configure Azure OpenAI credentials to enable.")
         
         # Proceed button
         st.markdown("---")
