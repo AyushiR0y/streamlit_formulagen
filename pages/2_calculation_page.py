@@ -69,7 +69,6 @@ INPUT_VARIABLES = {
     'SSV3_FACTOR': 'Special Surrender Value Factor for paid-up income benefits',
     'SSV2_FACTOR': 'Special Surrender Value Factor for return of premium',
     'FUND_VALUE': 'The total value of the policy fund at surrender or maturity',
-    'N': 'min(Policy_term, 20) - Elapsed_policy_duration',
     'SYSTEM_PAID': 'Amount paid by system for surrender or maturity',
     'CAPITAL_UNITS_VALUE': 'Number of units in policy fund at surrender or maturity',
 }
@@ -921,9 +920,6 @@ def main():
                     
                     st.success(f"✅ Successfully loaded {len(df)} rows with {len(headers)} columns")
                     
-                    # Show preview
-                    with st.expander("📊 Data Preview", expanded=False):
-                        st.dataframe(df.head(10), use_container_width=True)
                     
                     # --- Filter Variables Step ---
                     st.markdown("---")
