@@ -7,6 +7,7 @@ from pathlib import Path
 from dataclasses import dataclass
 import os
 import math
+from datetime import datetime, date
 
 # Load Common CSS
 def load_css(file_name="style.css"):
@@ -37,14 +38,59 @@ class VariableMapping:
     matching_method: str = "manual"
     is_verified: bool = True
 
-# --- Calculation Logic ---
+# --- Helper Functions ---
+def safe_convert_to_number(value: Any) -> float:
+    """Safely convert various types to float, handling dates, timestamps, etc."""
+    
+    # Handle None/NaN
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return 0.0
+    
+    # Handle empty strings
+    if value == '' or value == ' ':
+        return 0.0
+    
+    # Already a number
+    if isinstance(value, (int, float)):
+        return float(value)
+    
+    # Handle datetime/timestamp - convert to timestamp or year
+    if isinstance(value, (datetime, date, pd.Timestamp)):
+        # You can choose what makes sense for your use case:
+        # Option 1: Convert to year
+        return float(value.year)
+        # Option 2: Convert to Unix timestamp
+        # return value.timestamp()
+        # Option 3: Extract days since epoch
+        # return (value - datetime(1970, 1, 1)).days
+    
+    # Handle strings
+    if isinstance(value, str):
+        # Try to parse as number
+        try:
+            # Remove common formatting characters
+            cleaned = value.replace(',', '').replace('$', '').replace('%', '').strip()
+            return float(cleaned)
+        except ValueError:
+            # If it's a date string, try to parse it
+            try:
+                parsed_date = pd.to_datetime(value)
+                return float(parsed_date.year)
+            except:
+                # Can't convert, return 0
+                return 0.0
+    
+    # Default fallback
+    return 0.0
+
+
 def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
     """Safely evaluate a mathematical expression with given variables"""
     try:
         # Replace variable names with their values
         eval_expr = expression
         
-        # Sort by length descending to avoid partial replacements (e.g., 'VAR' replacing 'VAR2')
+        # Sort by length descending to avoid partial replacements
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
         
         for var_name in sorted_vars:
@@ -52,16 +98,12 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             pattern = r'\b' + re.escape(var_name) + r'\b'
             value = variables[var_name]
             
-            # Handle NaN/None/Empty values
-            if pd.isna(value) or value is None or value == '':
-                value = 0
-            else:
-                # Ensure numeric type
-                value = float(value)
+            # Convert to safe numeric value
+            numeric_value = safe_convert_to_number(value)
             
-            eval_expr = re.sub(pattern, str(value), eval_expr)
+            eval_expr = re.sub(pattern, str(numeric_value), eval_expr)
         
-        # Handle common functions (ensure they match Python names)
+        # Handle common functions
         eval_expr = eval_expr.replace('MAX(', 'max(')
         eval_expr = eval_expr.replace('MIN(', 'min(')
         eval_expr = eval_expr.replace('ABS(', 'abs(')
@@ -93,53 +135,94 @@ def calculate_row(row: pd.Series, formula_expr: str, mappings: Dict) -> Any:
     # Build variable values from row data
     var_values = {}
     
-    # Mappings is { "VariableName": VariableMappingObject }
     for var_name, mapping_obj in mappings.items():
-        # mapping_obj.mapped_header is the Excel Column Name
         header = mapping_obj.mapped_header
         
         if header and header in row.index:
             value = row[header]
             var_values[var_name] = value
-            
+    
     # Evaluate formula with the mapped values
     result = safe_eval(formula_expr, var_values)
     return result
+
+
+def match_formula_to_output_column(formula_name: str, output_columns: List[str]) -> str:
+    """
+    Try to intelligently match a formula name to an output column
+    Returns the best matching column name or the formula name if no match
+    """
+    formula_lower = formula_name.lower()
+    
+    # Direct exact match (case insensitive)
+    for col in output_columns:
+        if col.lower() == formula_lower:
+            return col
+    
+    # Partial match - formula name in column or vice versa
+    for col in output_columns:
+        col_lower = col.lower()
+        if formula_lower in col_lower or col_lower in formula_lower:
+            return col
+    
+    # Token-based matching
+    formula_tokens = set(re.findall(r'\w+', formula_lower))
+    best_match = None
+    best_score = 0
+    
+    for col in output_columns:
+        col_tokens = set(re.findall(r'\w+', col.lower()))
+        overlap = len(formula_tokens & col_tokens)
+        
+        if overlap > best_score:
+            best_score = overlap
+            best_match = col
+    
+    if best_match and best_score > 0:
+        return best_match
+    
+    # No good match found, use formula name as new column
+    return formula_name
 
 
 def run_calculations(df: pd.DataFrame, 
                      formulas: List[Dict], 
                      mappings: Dict,
                      output_columns: List[str]) -> tuple[pd.DataFrame, List[CalculationResult]]:
-    """
-    Run all formulas on dataframe
-    """
+    """Run selected formulas on dataframe"""
     result_df = df.copy()
     calculation_results = []
     
+    # Filter formulas - only run those that match output columns
+    formulas_to_run = []
     for formula in formulas:
+        formula_name = formula.get('formula_name', 'Unknown')
+        
+        # Check if this formula is relevant to any output column
+        matched_col = match_formula_to_output_column(formula_name, output_columns)
+        
+        if matched_col in output_columns or matched_col == formula_name:
+            formulas_to_run.append((formula, matched_col))
+    
+    if not formulas_to_run:
+        st.warning("⚠️ No formulas matched the selected output columns. Using all formulas.")
+        formulas_to_run = [(f, f.get('formula_name', 'Unknown')) for f in formulas]
+    
+    st.info(f"Running {len(formulas_to_run)} formula(s) for selected output columns")
+    
+    for formula, output_col in formulas_to_run:
         formula_name = formula.get('formula_name', 'Unknown')
         formula_expr = formula.get('formula_expression', '')
         
         errors = []
         success_count = 0
         
-        # Determine output column for this formula
-        output_col = None
-        for col in output_columns:
-            if col.lower() in formula_name.lower() or formula_name.lower() in col.lower():
-                output_col = col
-                break
-        
-        if not output_col:
-            output_col = formula_name
-        
         # Ensure column exists in dataframe
         if output_col not in result_df.columns:
             result_df[output_col] = np.nan
         
-        # Create a progress bar for this formula's execution
-        progress_text = f"Processing: {formula_name}..."
+        # Create a progress bar
+        progress_text = f"Processing: {formula_name} → {output_col}"
         progress_bar = st.progress(0)
         status_text = st.empty()
         status_text.info(progress_text)
@@ -153,7 +236,7 @@ def run_calculations(df: pd.DataFrame,
                 
                 if isinstance(result, str) and result.startswith("ERROR"):
                     errors.append(f"Row {idx}: {result}")
-                    result_df.at[idx, output_col] = result
+                    result_df.at[idx, output_col] = None  # Use None instead of ERROR string
                 else:
                     result_df.at[idx, output_col] = result
                     success_count += 1
@@ -161,10 +244,10 @@ def run_calculations(df: pd.DataFrame,
             except Exception as e:
                 error_msg = f"Row {idx}: {str(e)}"
                 errors.append(error_msg)
-                result_df.at[idx, output_col] = f"ERROR"
-                
-            # Update Progress
-            if idx % 10 == 0: # Update every 10 rows to save performance
+                result_df.at[idx, output_col] = None
+            
+            # Update Progress every 10 rows
+            if idx % 10 == 0:
                 progress_bar.progress((idx + 1) / total_rows)
                 status_text.text(f"{progress_text} ({idx+1}/{total_rows})")
         
@@ -174,9 +257,9 @@ def run_calculations(df: pd.DataFrame,
         success_rate = (success_count / total_rows) * 100 if total_rows > 0 else 0
         
         calculation_results.append(CalculationResult(
-            formula_name=formula_name,
+            formula_name=f"{formula_name} → {output_col}",
             rows_calculated=success_count,
-            errors=errors[:10],  # Limit to first 10 errors
+            errors=errors[:20],  # Limit to first 20 errors
             success_rate=success_rate
         ))
     
@@ -207,6 +290,8 @@ def main():
         unsafe_allow_html=True
     )
     
+    st.markdown("---")
+    
     # Check for required session state
     if 'excel_df' not in st.session_state or st.session_state.excel_df is None:
         st.error("❌ No Excel data found. Please upload data in the previous step.")
@@ -217,7 +302,13 @@ def main():
         st.error("❌ No mappings found. Please complete the mapping step first.")
         return
     
+    if 'formulas' not in st.session_state or not st.session_state.formulas:
+        st.error("❌ No formulas found. Please extract formulas first.")
+        return
+    
     # Option to reupload or use existing
+    st.subheader("📊 Data Source")
+    
     col_file1, col_file2 = st.columns([2, 1])
     
     with col_file1:
@@ -240,53 +331,75 @@ def main():
                     calc_df = pd.read_csv(uploaded_calc_file)
                 else:
                     calc_df = pd.read_excel(uploaded_calc_file)
-                st.success(f"✅ Loaded {len(calc_df)} rows")
+                st.success(f"✅ Loaded {len(calc_df)} rows with {len(calc_df.columns)} columns")
             except Exception as e:
                 st.error(f"Error loading file: {e}")
     else:
         calc_df = st.session_state.excel_df
-        st.info(f"Using existing file with {len(calc_df)} rows")
+        st.info(f"Using existing file with {len(calc_df)} rows and {len(calc_df.columns)} columns")
     
     if calc_df is not None:
         # Show preview
-        with st.expander("📊 Data Preview"):
+        with st.expander("📊 Data Preview (First 5 Rows)"):
             st.dataframe(calc_df.head(), use_container_width=True)
         
         st.markdown("---")
         
         # Select output columns
-        st.markdown("### Select Output Columns to Populate")
+        st.subheader("🎯 Select Output Columns")
         st.markdown("Choose which columns should be filled with formula results. "
-                    "The system will try to match formula names to column names automatically.")
+                    "Only formulas matching these columns will be executed.")
         
         available_cols = calc_df.columns.tolist()
+        
+        # Suggest columns based on formula names
+        formula_names = [f.get('formula_name', '') for f in st.session_state.formulas]
+        suggested_cols = []
+        
+        for col in available_cols:
+            for fname in formula_names:
+                if fname.lower() in col.lower() or col.lower() in fname.lower():
+                    if col not in suggested_cols:
+                        suggested_cols.append(col)
+        
+        if suggested_cols:
+            st.info(f"💡 Suggested columns based on formula names: {', '.join(suggested_cols[:5])}")
+        
         selected_output_cols = st.multiselect(
             "Output Columns",
             options=available_cols,
+            default=suggested_cols[:5] if suggested_cols else [],
             help="Select columns where formula results will be written"
         )
         
         if selected_output_cols:
-            st.info(f"Selected {len(selected_output_cols)} output column(s)")
+            st.success(f"✅ Selected {len(selected_output_cols)} output column(s)")
+            
+            # Show which formulas will run
+            with st.expander("🔍 Preview: Formulas to be executed"):
+                for formula in st.session_state.formulas:
+                    fname = formula.get('formula_name', 'Unknown')
+                    matched_col = match_formula_to_output_column(fname, selected_output_cols)
+                    
+                    if matched_col in selected_output_cols:
+                        st.markdown(f"- **{fname}** → `{matched_col}`")
         
         st.markdown("---")
         
         # Run calculations button
-        col_btn1, col_btn2 = st.columns([1, 3])
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
         
         with col_btn1:
-            if st.button("▶️ Run Calculations", type="primary", disabled=not selected_output_cols):
+            run_disabled = not selected_output_cols
+            
+            if st.button("▶️ Run Calculations", type="primary", disabled=run_disabled):
                 with st.spinner("Initializing calculation engine..."):
-                    # 1. Prepare Mappings
-                    # Session state has { "Excel_Header": "VariableName" }
-                    # Calculation logic needs { "VariableName": VariableMappingObject }
-                    
+                    # Prepare Mappings
                     transformed_mappings = {}
                     for header, var_name in st.session_state.header_to_var_mapping.items():
                         if not header or not var_name:
                             continue
                         
-                        # Create a mapping object expected by calculate_row
                         transformed_mappings[var_name] = VariableMapping(
                             variable_name=var_name,
                             mapped_header=header,
@@ -295,14 +408,9 @@ def main():
                             is_verified=True
                         )
                     
-                    # Debugging info: Show how many variables we have mapped
-                    st.info(f"Found {len(transformed_mappings)} variable mappings ready for calculation.")
+                    st.info(f"📊 Using {len(transformed_mappings)} variable mappings")
                     
-                    # 2. Run Logic
                     formulas_to_run = st.session_state.formulas
-                    
-                    if not formulas_to_run:
-                        st.error("No formulas found in session.")
                     
                     try:
                         result_df, calc_results = run_calculations(
@@ -312,7 +420,6 @@ def main():
                             selected_output_cols
                         )
                         
-                        # Store results in session state for download/display
                         st.session_state.results_df = result_df
                         st.session_state.calc_results = calc_results
                         
@@ -322,7 +429,15 @@ def main():
                     except Exception as e:
                         st.error(f"❌ Calculation Error: {e}")
                         import traceback
-                        st.error(traceback.format_exc())
+                        st.code(traceback.format_exc())
+        
+        with col_btn2:
+            if st.button("🔄 Reset Results"):
+                if 'results_df' in st.session_state:
+                    del st.session_state.results_df
+                if 'calc_results' in st.session_state:
+                    del st.session_state.calc_results
+                st.rerun()
     
     # Display Results if they exist
     if 'results_df' in st.session_state and st.session_state.results_df is not None:
@@ -351,25 +466,26 @@ def main():
         st.markdown("### Formula Results")
         
         for calc_result in st.session_state.calc_results:
-            with st.expander(f"**{calc_result.formula_name}** - {calc_result.success_rate:.1f}% success"):
+            status_icon = "✅" if calc_result.success_rate >= 90 else "⚠️" if calc_result.success_rate >= 50 else "❌"
+            
+            with st.expander(f"{status_icon} **{calc_result.formula_name}** - {calc_result.success_rate:.1f}% success"):
                 st.markdown(f"**Rows Calculated:** {calc_result.rows_calculated} / {total_rows}")
                 
                 if calc_result.errors:
-                    st.markdown("**Errors:**")
+                    st.markdown(f"**Errors ({len(calc_result.errors)} shown):**")
                     for error in calc_result.errors:
                         st.error(error)
         
         # Show results dataframe
         st.markdown("---")
         st.markdown("### Results Data")
-        st.dataframe(st.session_state.results_df, use_container_width=True)
+        st.dataframe(st.session_state.results_df, use_container_width=True, height=400)
         
         # Export options
         st.markdown("---")
         col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 2])
         
         with col_exp1:
-            # Export to Excel
             from io import BytesIO
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -383,7 +499,6 @@ def main():
             )
         
         with col_exp2:
-            # Export to CSV
             csv_data = st.session_state.results_df.to_csv(index=False)
             st.download_button(
                 label="📥 Download CSV",
@@ -391,12 +506,6 @@ def main():
                 file_name="calculation_results.csv",
                 mime="text/csv"
             )
-        
-        with col_exp3:
-            if st.button("🔄 Start New Calculation"):
-                st.session_state.results_df = None
-                st.session_state.calc_results = None
-                st.rerun()
 
 if __name__ == "__main__":
     main()
