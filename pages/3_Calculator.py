@@ -190,8 +190,23 @@ def main():
     
     load_css()
     
-    st.title("🧮 Calculation Engine")
-    st.markdown("Apply formulas to your data row-by-row and generate calculated results.")
+    # Custom header
+    st.markdown(
+        """
+        <div class="header-container">
+            <div class="header-bar">
+                <img src="https://raw.githubusercontent.com/AyushiR0y/streamlit_formulagen/main/assets/logo.png" style="height: 100px;">
+                <div class="header-title" style="font-size: 2.5rem; font-weight: 750; color: #004DA8;">
+                    Calculation Engine
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    st.markdown("---")
+    
     
     # Check for required session state
     if 'excel_df' not in st.session_state or st.session_state.excel_df is None:
