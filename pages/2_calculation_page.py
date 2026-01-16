@@ -249,7 +249,14 @@ class VariableHeaderMatcher:
             method = "fuzzy"
             
         return combined, method
-    
+    def semantic_similarity_ai(self, header: str, variables: List[str]) -> Tuple[str, float, str]:
+        """
+        Use AI to compare header against ALL variables and return the best match
+        Returns: (best_variable, score, reason)
+        """
+        # Just call the batch method with a single header
+        result = self.semantic_similarity_ai_batch([header], variables)
+        return result.get(header, ("", 0.0, "No AI response"))
     def semantic_similarity_ai_batch(self, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
         """
         Use AI to map multiple headers to variables in a single API call
@@ -345,69 +352,7 @@ class VariableHeaderMatcher:
             st.warning(f"AI batch semantic matching failed: {e}")
             return {h: ("", 0.0, f"AI_error: {str(e)}") for h in headers}
     
-    def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
-        """
-        Finds the best matching candidate for the target.
-        Target: Excel Header (what we're trying to map)
-        Candidates: List of Variables (what we're mapping to)
-        """
-        best_score = 0.0
-        best_candidate = None
-        best_method = "no_match"
-        
-        # 1. Calculate Fuzzy and Lexical Scores for all candidates
-        # We do this regardless of AI to have a fallback if AI fails
-        for candidate in candidates:
-            # Get scores from class methods
-            lex_score = self.lexical_similarity(target, candidate)
-            fuzzy_score = self.fuzzy_similarity(target, candidate)
-            
-            # Combine scores (Weighted Average favoring Lexical for exactness)
-            # You can adjust weights if needed, but 0.6 Fuzzy / 0.4 Lexical is a good balance
-            combined_score = (lex_score * 0.4) + (fuzzy_score * 0.6)
-            
-            if combined_score > best_score:
-                best_score = combined_score
-                best_candidate = candidate
-                best_method = "fuzzy_lexical"
-        
-        # 2. AI Semantic Matching (Overrides fuzzy if enabled)
-        # The AI function takes (Header, List_of_Variables) and returns the best match directly
-        if use_ai and candidates:
-            try:
-                ai_selected_var, ai_explanation = self.semantic_similarity_ai(target, candidates)
-                
-                # If AI successfully found a match, override the fuzzy match
-                if ai_selected_var:
-                    best_candidate = ai_selected_var
-                    
-                    # Extract confidence from AI explanation if available (e.g., "0.95"), else default high
-                    ai_confidence = 0.95
-                    if "0." in ai_explanation:
-                        import re
-                        conf_match = re.search(r'([0-9]+\.[0-9]+)', ai_explanation)
-                        if conf_match:
-                            ai_confidence = float(conf_match.group(1))
-                    
-                    best_score = ai_confidence
-                    best_method = ai_explanation # Use the AI's explanation as the method string
-            
-            except Exception as e:
-                # If AI fails, we silently fallback to the fuzzy match found above
-                pass
-        
-        # 3. Final Threshold Check
-        # Only return mapping if score meets minimum threshold (prevents bad matches like 'N')
-        if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
-            return VariableMapping(
-                variable_name=target,          # Excel Header
-                mapped_header=best_candidate,     # Best Variable found
-                confidence_score=best_score,
-                matching_method=best_method,
-                is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
-            )
-        
-        return None
+    
     def match_all(self, targets: List[str], candidates: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
         """
         Maps all targets to best candidates.
@@ -645,160 +590,7 @@ def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict
     
     return mapped_formulas
 
-def show_calculation_results():
-    """Display calculation results"""
-    st.subheader("✅ Calculation Results")
-    
-    # Summary statistics
-    st.markdown("### Summary")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    total_rows = len(st.session_state.results_df)
-    total_formulas = len(st.session_state.calc_results)
-    
-    avg_success = sum(r.success_rate for r in st.session_state.calc_results) / total_formulas if total_formulas > 0 else 0
-    
-    with col1:
-        st.metric("Total Rows", total_rows)
-    with col2:
-        st.metric("Formulas Applied", total_formulas)
-    with col3:
-        st.metric("Avg Success Rate", f"{avg_success:.1f}%")
-    
-    # Show detailed results
-    st.markdown("---")
-    st.markdown("### Formula Results")
-    
-    for calc_result in st.session_state.calc_results:
-        with st.expander(f"**{calc_result.formula_name}** - {calc_result.success_rate:.1f}% success"):
-            st.markdown(f"**Rows Calculated:** {calc_result.rows_calculated} / {total_rows}")
-            
-            if calc_result.errors:
-                st.markdown("**Errors:**")
-                for error in calc_result.errors:
-                    st.error(error)
-    
-    # Show results dataframe
-    st.markdown("---")
-    st.markdown("### Results Data")
-    st.dataframe(st.session_state.results_df, use_container_width=True)
-    
-    # Export options
-    st.markdown("---")
-    col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 2])
-    
-    with col_exp1:
-        # Export to Excel
-        from io import BytesIO
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            st.session_state.results_df.to_excel(writer, index=False, sheet_name='Results')
-        
-        st.download_button(
-            label="📥 Download Excel",
-            data=output.getvalue(),
-            file_name="calculation_results.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    
-    with col_exp2:
-        # Export to CSV
-        csv_data = st.session_state.results_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv_data,
-            file_name="calculation_results.csv",
-            mime="text/csv"
-        )
-    
-    with col_exp3:
-        if st.button("🔄 Start New Calculation"):
-            st.session_state.calculation_complete = False
-            st.session_state.results_df = None
-            st.session_state.calc_results = None
-            st.rerun()
 
-def show_calculation_engine():
-    """Display calculation engine interface"""
-    st.subheader("🧮 Calculation Engine")
-    st.markdown("Apply formulas to your data row-by-row and generate calculated results.")
-    
-    # Option to reupload or use existing
-    col_file1, col_file2 = st.columns([2, 1])
-    
-    with col_file1:
-        use_existing = st.checkbox("Use previously uploaded Excel file", value=True)
-    
-    calc_df = None
-    
-    if not use_existing:
-        st.markdown("### Upload New Excel File")
-        uploaded_calc_file = st.file_uploader(
-            "Upload Excel/CSV for calculations",
-            type=list(ALLOWED_EXCEL_EXTENSIONS),
-            key="calc_excel_uploader"
-        )
-        
-        if uploaded_calc_file:
-            file_extension = Path(uploaded_calc_file.name).suffix.lower()
-            calc_df, calc_headers = load_excel_file(uploaded_calc_file.read(), file_extension)
-            
-            if calc_df is not None:
-                st.success(f"✅ Loaded {len(calc_df)} rows")
-                
-                # Verify headers match mappings
-                mapped_headers = set(st.session_state.header_to_var_mapping.keys())
-                file_headers = set(calc_headers)
-                
-                if not mapped_headers.issubset(file_headers):
-                    missing = mapped_headers - file_headers
-                    st.error(f"❌ Missing headers in new file: {', '.join(list(missing)[:5])}")
-                    calc_df = None
-    else:
-        calc_df = st.session_state.excel_df
-        st.info(f"Using existing file with {len(calc_df)} rows")
-    
-    if calc_df is not None:
-        # Show preview
-        with st.expander("📊 Data Preview"):
-            st.dataframe(calc_df.head(), use_container_width=True)
-        
-        st.markdown("---")
-        
-        # Select output columns
-        st.markdown("### Select Output Columns to Populate")
-        st.markdown("Choose which columns should be filled with formula results")
-        
-        available_cols = calc_df.columns.tolist()
-        selected_output_cols = st.multiselect(
-            "Output Columns",
-            options=available_cols,
-            help="Select columns where formula results will be written"
-        )
-        
-        if selected_output_cols:
-            st.info(f"Selected {len(selected_output_cols)} output column(s)")
-        
-        st.markdown("---")
-        
-        # Run calculations button
-        col_btn1, col_btn2 = st.columns([1, 3])
-        
-        with col_btn1:
-            if st.button("▶️ Run Calculations", type="primary", disabled=not selected_output_cols):
-                with st.spinner("Calculating..."):
-                    # Placeholder for calculation logic
-                    result_df = calc_df.copy()
-                    calc_results = []
-                    
-                    # Store results
-                    st.session_state.results_df = result_df
-                    st.session_state.calc_results = calc_results
-                    st.session_state.calculation_complete = True
-                    
-                    st.success("✅ Calculations complete!")
-                    st.rerun()
 
 
 def get_all_master_variables():
@@ -938,28 +730,11 @@ def main():
     if 'derived_variables' not in st.session_state:
         st.session_state.derived_variables = {}
         
-    if 'calculation_complete' not in st.session_state:
-        st.session_state.calculation_complete = False
-
-    if 'results_df' not in st.session_state:
-        st.session_state.results_df = None
-
-    if 'calc_results' not in st.session_state:
-        st.session_state.calc_results = None
-        
     # State for user's variable selection
     if 'selected_variables_for_mapping' not in st.session_state:
         st.session_state.selected_variables_for_mapping = []
     
-   # Check if we're in calculation results mode
-    if st.session_state.mapping_complete and st.session_state.calculation_complete:
-        show_calculation_results()
-        return
-
-    # Check if we're ready for calculations
-    if st.session_state.mapping_complete:
-        show_calculation_engine()
-        return
+   
 
     # Main content
     col1, col2 = st.columns([1, 1])
