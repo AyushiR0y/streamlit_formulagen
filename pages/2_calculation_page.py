@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -315,6 +314,7 @@ Format: SCORE: X.XX | REASON: explanation"""
             if mapping:
                 mappings[target] = mapping
             else:
+                # If no good match found, create an empty mapping
                 mappings[target] = VariableMapping(
                     variable_name=target,
                     mapped_header="",
@@ -590,13 +590,7 @@ def show_calculation_engine():
         with col_btn1:
             if st.button("▶️ Run Calculations", type="primary", disabled=not selected_output_cols):
                 with st.spinner("Calculating..."):
-                    # Import calculation engine (placeholder logic)
-                    # from calculation_engine import run_calculations
-                    
                     # Placeholder for calculation logic
-                    # result_df, calc_results = run_calculations(...)
-                    
-                    # Mock results for demonstration
                     result_df = calc_df.copy()
                     calc_results = []
                     
@@ -838,6 +832,10 @@ def main():
 
     if 'calc_results' not in st.session_state:
         st.session_state.calc_results = None
+        
+    # State for user's variable selection
+    if 'selected_variables_for_mapping' not in st.session_state:
+        st.session_state.selected_variables_for_mapping = []
     
    # Check if we're in calculation results mode
     if st.session_state.mapping_complete and st.session_state.calculation_complete:
@@ -883,7 +881,30 @@ def main():
                     with st.expander("📊 Data Preview", expanded=False):
                         st.dataframe(df.head(10), use_container_width=True)
                     
-                    # Start mapping process
+                    # --- NEW: Variable Selection Step ---
+                    st.markdown("---")
+                    st.subheader("🛠️ Filter Variables for Mapping")
+                    st.markdown("Deselect variables that are **not** relevant to this specific Excel file. "
+                                "This prevents incorrect mappings (e.g., mapping 'N' to 'Name').")
+                    
+                    all_master_vars = get_all_master_variables()
+                    
+                    # Default to selecting all variables if it's a fresh file upload
+                    # (Heuristic: if headers changed, reset selection)
+                    if st.session_state.selected_variables_for_mapping == [] or \
+                       set(st.session_state.excel_headers) != set(st.session_state.get('last_uploaded_headers', [])):
+                        st.session_state.selected_variables_for_mapping = all_master_vars
+                        st.session_state.last_uploaded_headers = st.session_state.excel_headers
+                    
+                    st.session_state.selected_variables_for_mapping = st.multiselect(
+                        "Select Variables to Map",
+                        options=all_master_vars,
+                        default=st.session_state.selected_variables_for_mapping,
+                        key="variable_filter_multiselect",
+                        help="Variables NOT selected here will be ignored by the automatic mapper."
+                    )
+                    # --------------------------------------
+                    
                     st.markdown("---")
                     
                     st.subheader("⚙️ Initial Matching (Lexical + Fuzzy)")
@@ -892,16 +913,16 @@ def main():
                     
                     if st.button("🔗 Start Automatic Mapping", type="primary", disabled=st.session_state.initial_mapping_done):
                         with st.spinner("Analyzing headers and matching with variables..."):
-                            # Get all variables (Input + Derived + Extracted)
-                            all_variables = get_all_master_variables()
+                            # Use the FILTERED list of variables from the user
+                            active_variables = st.session_state.selected_variables_for_mapping
                             
                             matcher = VariableHeaderMatcher()
                             
                             # Map Headers -> Variables
-                            # We pass headers as targets and variables as candidates
+                            # We pass headers as targets and FILTERED variables as candidates
                             mappings = matcher.match_all(
                                 targets=headers,
-                                candidates=all_variables,
+                                candidates=active_variables,
                                 use_ai=False
                             )
                             
@@ -925,7 +946,7 @@ def main():
                                     method = m.matching_method.split('_')[0]
                                     method_counts[method] = method_counts.get(method, 0) + 1
                             
-                            st.success(f"✅ Mapped {mapped} out of {total} headers")
+                            st.success(f"✅ Mapped {mapped} out of {total} headers using {len(active_variables)} variables")
                             
                             if method_counts:
                                 st.markdown("**Matching Methods Used:**")
@@ -1022,6 +1043,8 @@ def main():
             st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 2px solid #004DA8;">', unsafe_allow_html=True)
             
             # Get current variables for dropdown
+            # Use the user's filtered selection + any manually added ones (if we tracked that, but here we just use the filtered list)
+            # Or safer: Use full list in dropdown but default to None if unmapped
             current_variables = get_all_master_variables()
             
             # Filter out removed headers
@@ -1040,7 +1063,8 @@ def main():
                     # Dropdown options: (None) + all variables
                     dropdown_options = ["(None of the following)"] + current_variables
                     
-                    # Determine index
+                    # Determine index safely
+                    # If current_var is empty or not found in options, default to index 0 (None of the following)
                     try:
                         idx = dropdown_options.index(current_var)
                     except ValueError:
@@ -1132,8 +1156,8 @@ def main():
             if st.button("🤖 Run AI Assist for Selected Headers", type="secondary", disabled=MOCK_MODE):
                 with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers..."):
                     matcher = VariableHeaderMatcher()
-                    # Get current variables
-                    current_variables = get_all_master_variables()
+                    # Get current variables (using the user filtered list keeps it consistent)
+                    current_variables = st.session_state.selected_variables_for_mapping if st.session_state.selected_variables_for_mapping else get_all_master_variables()
                     
                     improved_count = 0
                     for header in selected_for_ai:
