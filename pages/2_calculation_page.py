@@ -691,24 +691,33 @@ def set_custom_css():
             font-weight: 700;
         }
 
-        /* Custom Styling for Multiselect to remove red boxes and use Blue */
-        .stMultiSelect [data-baseweb="select"] {
-            border: 1px solid #004DA8 !important;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 77, 168, 0.2);
-        }
-
-        .stMultiSelect [data-baseweb="tag"] {
-            background-color: #004DA8 !important;
-            color: white;
-            border: 1px solid #004DA8 !important;
-            border-radius: 1px;
+        .stMultiSelect label {
             font-weight: 600;
+            color: #f5f7fa !important;
         }
-
-        .stMultiSelect [data-baseweb="tag"]:hover {
-            background-color: #004DA8 !important;
+        .stMultiSelect > div > div {
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            background: linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
+        }
+        .stMultiSelect > div > div:focus-within {
+            border-color: #e0e0e0;
+            box-shadow: 0 0 0 0.2rem rgba(0, 77, 168, 0.25);
+            background: white;
+        }
+        .stMultiSelect [data-baseweb="tag"] {
+            background: linear-gradient(135deg, #6d96c7 0%, #a6d3ff 50%, #cbdff7 100%);
             color: white !important;
+            border-radius: 5px;
+            padding: 4px 10px;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+        .stMultiSelect [data-baseweb="tag"] svg {
+            color: white !important;
+        }
+        .stMultiSelect input {
+            color: #2f3b4a !important;
         }
 
         .confidence-high {
