@@ -1157,13 +1157,9 @@ def main():
             )
         
         with col_exp3:
+            # Use st.switch_page to go to the specific file in pages folder
             if st.button("➡️ Proceed to Calculations", type="primary", key="goto_calc"):
-                try:
-                    # Logic to switch to calculation view
-                    st.session_state.calculation_view = True
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Error: {e}")
+                st.switch_page("pages/3_Calculator.py")
     
     # Footer
     st.markdown("---")
