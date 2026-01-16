@@ -624,10 +624,23 @@ def get_all_master_variables():
             all_vars.update(cf_derived.keys())
             
     return sorted(list(all_vars))
+def load_css(file_name="style.css"):
+    """
+    Reads a CSS file and injects it into the Streamlit app.
+    """
+    # Determine the path to the CSS file relative to this script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    css_path = os.path.join(current_dir, file_name)
+    
+    if os.path.exists(css_path):
+        with open(css_path, 'r') as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    else:
+        st.warning(f"⚠️ {file_name} not found. Using default styles.")
 
 def main():
     load_css()
-    
+
     st.set_page_config(
         page_title="Variable Mapping",
         page_icon="📊",
