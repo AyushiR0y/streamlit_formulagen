@@ -345,155 +345,167 @@ class VariableHeaderMatcher:
             
         return score
     
-    def calculate_combined_score(self, var: str, header: str) -> Tuple[float, str]:
-        """Calculate combined score from all non-AI methods"""
-        lex_score = self.lexical_similarity(var, header)
-        fuzzy_score = self.fuzzy_similarity(var, header)
-        
-        # Weight lexical matching more heavily as it's more reliable
-        combined = (lex_score * 0.6) + (fuzzy_score * 0.4)
-        
-        # Determine which method contributed most
-        if lex_score > fuzzy_score:
-            method = "lexical"
-        else:
-            method = "fuzzy"
-            
-        return combined, method
-    def semantic_similarity_ai(self, header: str, variables: List[str]) -> Tuple[str, float, str]:
-        """
-        Wrapper function to ensure consistency between single-header lookups 
-        (used in AI Assist) and batch lookups (used in Auto Mapping).
-        
-        Simply calls the batch function with a list of 1 item.
-        """
-        # Call the batch method with a single header
-        # Returns: {header: (variable, score, reason)}
-        result = self.semantic_similarity_ai_batch([header], variables)
-        
-        # Extract result for the single header
-        return result.get(header, ("", 0.0, "No match"))
-        def semantic_similarity_ai_batch(self, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
+    def semantic_similarity_ai_batch(self, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
         """
         Use AI to map multiple headers to variables in a single API call.
-        
-        STRATEGY CHANGE:
-        Instead of asking AI to calculate complex scores, we ask it to RANK matches
-        based on simple, clear criteria. This is less error-prone.
+        Returns: {header: (best_variable, score, reason)}
         """
         if MOCK_MODE or not client:
             return {h: ("", 0.0, "AI unavailable") for h in headers}
         
         try:
-            # Format headers and variables for prompt
-            header_list = "\n".join([f"  {i+1}. {h}" for i, h in enumerate(headers)])
-            var_list = "\n".join([f"  - {var}" for var in variables])
+            # Format for better AI parsing
+            header_list = "\n".join([f"{i+1}. {h}" for i, h in enumerate(headers)])
+            var_list = "\n".join([f"- {var}" for var in variables])
             
-            prompt = f"""You are an expert in insurance data mapping. You need to map Excel Headers to Variable Names.
+            prompt = f"""You are mapping Excel column headers to database variable names for insurance data.
 
-                EXCEL HEADERS:
+                HEADERS TO MAP:
                 {header_list}
 
                 AVAILABLE VARIABLES:
                 {var_list}
 
-                INSTRUCTIONS:
-                For EACH header above, identify the SINGLE best variable from the variable list. Output the result in the following format:
+                MATCHING RULES (in priority order):
 
-                HEADER: [Exact Header Name]
-                VARIABLE: [Best Variable Name or NONE]
-                SCORE: [A number between 0.0 and 1.0 representing your confidence]
-                REASON: [Brief explanation]
+                1. EXACT MATCH (Score: 1.0)
+                - Header matches variable exactly (case-insensitive)
+                - Example: "PolicyNumber" matches "PolicyNumber"
 
-                MATCHING RANKING (Follow this order of importance):
-                1. EXACT MATCH: If a variable name matches the header EXACTLY (case-insensitive), choose it. (Score: 1.0)
-                2. SUFFIX MATCH: If the header ends with a specific code (e.g., "_AMT", "_FACTOR"), look for a variable with the SAME ending (e.g., "SSV1_AMT" ends in "_AMT", so "SSV1" is a better match than "SSV"). (Score: 0.9)
-                3. SEMANTIC MATCH: If neither exact nor suffix match, choose the variable with the closest semantic meaning in insurance/finance. (Score: 0.7 - 0.8)
+                2. SUBSTRING MATCH (Score: 0.9)
+                - Variable name is contained in header
+                - Example: "SSV1" matches header "SSV1_AMT"
+                - Example: "Premium" matches header "GrossPremium"
 
-                NEGATIVE CONSTRAINTS (Must be followed):
-                - If header is "Surrender Paid Amount", DO NOT choose "Paid", "Amount", or any generic variable. Look for "Surrender_Paid_Amount".
-                - If header ends in "_AMT", "_FACTOR", "_1", "_2", or "_3", prioritize variables that share that specific ending. Do not choose the base variable (e.g., prefer "SSV1" over "SSV" for "SSV1_AMT").
+                3. SUFFIX RELATIONSHIP (Score: 0.85)
+                - Header has suffix like _AMT, _FACTOR, _1, _2, _3
+                - Base matches variable
+                - Example: "SSV1_AMT" → "SSV1" (base "SSV1" matches)
 
-                IF NO GOOD MATCH EXISTS (score < 0.7), output "NONE" for the variable.
+                4. SEMANTIC SIMILARITY (Score: 0.7-0.8)
+                - Different words, same meaning
+                - Example: "Policy_Term" ↔ "Term"
+                - Example: "DOB" ↔ "DateOfBirth"
 
-                Repeat the format for each header.
-                """
+                5. PARTIAL MATCH (Score: 0.6)
+                - Significant word overlap
+                - Example: "Gross_Premium_Amount" ↔ "Premium"
+
+                EXCLUSION RULES (MUST FOLLOW):
+                - "Surrender Paid Amount" → NEVER map to "Paid" alone (too generic)
+                - "Gross Premium" → NEVER map to "PREMIUM" (unless variable is "GrossPremium")
+                - Headers with "Surrender" → NEVER map to just "Paid"
+                - Avoid mapping to variables that are substrings of better matches
+
+                OUTPUT FORMAT (for each header):
+                Header: [exact header name]
+                Variable: [exact variable name OR NONE]
+                Score: [0.0 to 1.0]
+                Reason: [brief explanation]
+                ---
+
+                Example:
+                Header: SSV1_AMT
+                Variable: SSV1
+                Score: 0.9
+                Reason: SSV1 is substring of SSV1_AMT, suffix relationship
+                ---
+
+                Now map each header:"""
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=1000, # Increased slightly for structured output
-                temperature=0.1
+                max_tokens=1000 + (len(headers) * 60),
+                temperature=0.0  # More deterministic
             )
             
             response_text = response.choices[0].message.content.strip()
             
-            # Parse response
-            results = {}
+            # Debug: print raw response
+            if os.getenv('DEBUG_MODE'):
+                print("AI Response:\n", response_text[:500])
             
-            # Robust split to handle variations in spacing/formatting
-            # Split by 'HEADER:' pattern which we enforced in prompt
-            sections = re.split(r'HEADER:\s*', response_text)
-            
-            for section in sections:
-                if not section.strip():
-                    continue
-                
-                # Extract VARIABLE
-                var_match = re.search(r'VARIABLE:\s*(.+?)(?:\n|SCORE:|$)', section, re.IGNORECASE)
-                var_name = var_match.group(1).strip() if var_match else "NONE"
-                
-                # Extract SCORE
-                score_match = re.search(r'SCORE:\s*([0-9]*\.?[0-9]+)', section, re.IGNORECASE)
-                score = float(score_match.group(1)) if score_match else 0.0
-                
-                # Extract REASON
-                # Assume rest of string is reason, or look for REASON tag
-                reason_part = section[len(var_match.group(0))+len(score_match.group(0)):].strip()
-                
-                # Clean up extra markers if AI added them (e.g. "SCORE: 0.9 REASON: ...")
-                # We split by newlines to get the first line or clean keywords
-                reason_lines = reason_part.splitlines()
-                # Filter out lines that look like tags
-                cleaned_reason = reason_lines[0] if reason_lines else ""
-                
-                # Find the Header this section belongs to
-                # We reconstruct header by looking at the text preceding "HEADER:"
-                # This is tricky in split, but we can rely on order
-                # Or simpler: Prompt forced "HEADER: [Name]" so var_match group(1) is not it.
-                # Actually, the section contains the header name in the text "1. Header Name"
-                # Let's extract the header name from the section start if possible, or just trust the order.
-                # Since `results` maps `header -> var`, we need the key (header name).
-                # This part relies on AI repeating the header name.
-                # Let's look for the header name in the text.
-                header_search = re.search(r'\d+\.\s+([^\n]+)', section)
-                if header_search:
-                    header_name = header_search.group(1).strip()
-                else:
-                    # Fallback if regex fails (shouldn't happen with strict prompt)
-                    header_name = "Unknown"
-
-                # Store result
-                results[header_name] = (var_name, min(score, 1.0), cleaned_reason)
-            
-            # Fill in any missing headers with empty results
-            # (AI might have skipped some if it failed to output them)
-            for header in headers:
-                if header not in results:
-                    results[header] = ("", 0.0, "No AI response found")
-            
-            return results
+            return self._parse_ai_response(response_text, headers, variables)
             
         except Exception as e:
-            st.warning(f"AI batch semantic matching failed: {e}")
-            return {h: ("", 0.0, f"AI_error: {str(e)}") for h in headers}
-    
-    
+            st.warning(f"AI batch matching error: {e}")
+            return {h: ("", 0.0, f"Error: {str(e)}") for h in headers}
+
+
+    def _parse_ai_response(self, response_text: str, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
+        """
+        Parse AI response with multiple fallback strategies.
+        """
+        results = {}
+        
+        # Split by separator
+        sections = response_text.split('---')
+        
+        for section in sections:
+            if not section.strip():
+                continue
+            
+            # Try to extract fields with multiple pattern variations
+            header = None
+            variable = None
+            score = 0.0
+            reason = "No explanation"
+            
+            # Pattern 1: "Header: value"
+            header_match = re.search(r'Header:\s*(.+?)(?:\n|$)', section, re.IGNORECASE)
+            if header_match:
+                header = header_match.group(1).strip()
+            
+            # Pattern 2: Variable extraction
+            var_match = re.search(r'Variable:\s*(.+?)(?:\n|$)', section, re.IGNORECASE)
+            if var_match:
+                variable = var_match.group(1).strip()
+            
+            # Pattern 3: Score extraction (handle decimals and integers)
+            score_match = re.search(r'Score:\s*([0-9]*\.?[0-9]+)', section, re.IGNORECASE)
+            if score_match:
+                score = float(score_match.group(1))
+            
+            # Pattern 4: Reason extraction
+            reason_match = re.search(r'Reason:\s*(.+?)(?:\n(?:Header|Variable|Score|---)|$)', section, re.IGNORECASE | re.DOTALL)
+            if reason_match:
+                reason = reason_match.group(1).strip()
+            
+            # Validate and store
+            if header and header in headers:
+                # Clean variable name
+                if variable:
+                    variable = variable.strip()
+                    # Handle common AI responses
+                    if variable.upper() in ['NONE', 'NULL', 'N/A', 'NO MATCH']:
+                        variable = ""
+                        score = 0.0
+                    elif variable not in variables:
+                        # AI hallucinated - try fuzzy match to find what it meant
+                        best_match = max(variables, key=lambda v: fuzz.ratio(variable.lower(), v.lower()))
+                        similarity = fuzz.ratio(variable.lower(), best_match.lower())
+                        if similarity > 85:
+                            variable = best_match
+                            reason += f" (corrected from '{variable}')"
+                        else:
+                            variable = ""
+                            score = 0.0
+                            reason = f"Invalid variable '{variable}'"
+                
+                results[header] = (variable if variable else "", score, reason)
+        
+        # Fill missing headers with empty results
+        for header in headers:
+            if header not in results:
+                results[header] = ("", 0.0, "AI did not process this header")
+        
+        return results
+
+
     def match_all_with_ai(self, headers: List[str], variables: List[str], use_ai: bool = True) -> Dict[str, VariableMapping]:
         """
-        Optimized matching process:
-        1. AI reviews ALL headers in one batch call (PRIMARY MATCHING with embedded logic).
-        2. Fall back to lexical/fuzzy only if AI fails.
+        Optimized matching with fallback strategy.
         """
         mappings = {}
         
@@ -501,90 +513,117 @@ class VariableHeaderMatcher:
         status_text = st.empty()
         
         if use_ai and not MOCK_MODE and client:
-            status_text.text("Stage 2/3: AI semantic matching (with embedded scoring logic)...")
-            progress_bar.progress(0.5)
+            status_text.text("AI semantic matching in progress...")
+            progress_bar.progress(0.3)
             
-            try:
-                # Call the updated batch method (no longer need complex pre-filtering)
-                ai_results = self.semantic_similarity_ai_batch(headers, variables)
+            # Primary: AI batch matching
+            ai_results = self.semantic_similarity_ai_batch(headers, variables)
+            progress_bar.progress(0.6)
+            
+            # Process AI results with fallback
+            for header in headers:
+                ai_variable, ai_score, ai_reason = ai_results.get(header, ("", 0.0, "No AI response"))
                 
-                for header in headers:
-                    ai_variable, ai_score, ai_reason = ai_results.get(header, ("", 0.0, "No AI response"))
-                    
-                    # If AI found a match with decent score, use it
-                    if ai_variable and ai_score >= CONFIDENCE_THRESHOLDS['low']:
-                        mappings[header] = VariableMapping(
-                            variable_name=header,
-                            mapped_header=ai_variable,
-                            confidence_score=ai_score,
-                            matching_method=ai_reason,
-                            is_verified=ai_score >= CONFIDENCE_THRESHOLDS['high']
-                        )
-                    else:
-                        # If AI failed or returned "NONE", map to nothing
-                        mappings[header] = VariableMapping(
-                            variable_name=header,
-                            mapped_header="",
-                            confidence_score=0.0,
-                            matching_method="no_match",
-                            is_verified=False
-                        )
-                        
-            except Exception as e:
-                st.warning(f"⚠️ AI matching failed: {e}. Falling back to lexical/fuzzy matching.")
-                # Fallback to basic matching
-                for header in headers:
+                # Lower threshold for AI since it's more intelligent
+                if ai_variable and ai_score >= 0.6:
+                    mappings[header] = VariableMapping(
+                        variable_name=header,
+                        mapped_header=ai_variable,
+                        confidence_score=ai_score,
+                        matching_method=f"AI: {ai_reason[:50]}",
+                        is_verified=ai_score >= 0.85
+                    )
+                else:
+                    # Fallback to lexical/fuzzy for this specific header
                     best_score = 0.0
                     best_candidate = None
+                    best_method = "no_match"
                     
                     for candidate in variables:
-                        combined, method = self.calculate_combined_score(candidate, header)
-                        if combined > best_score:
-                            best_score = combined
+                        # Try lexical
+                        lex_score = self.lexical_similarity(header, candidate)
+                        if lex_score > best_score:
+                            best_score = lex_score
                             best_candidate = candidate
-                            # method = "lexical" or "fuzzy" inside helper
+                            best_method = "lexical"
+                        
+                        # Try fuzzy
+                        fuzzy_score = self.fuzzy_similarity(header, candidate) / 100.0
+                        if fuzzy_score > best_score:
+                            best_score = fuzzy_score
+                            best_candidate = candidate
+                            best_method = "fuzzy"
                     
-                    if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
+                    if best_candidate and best_score >= 0.5:  # Lower threshold
                         mappings[header] = VariableMapping(
                             variable_name=header,
                             mapped_header=best_candidate,
                             confidence_score=best_score,
-                            matching_method=method,
-                            is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
+                            matching_method=f"{best_method} (AI fallback)",
+                            is_verified=best_score >= 0.8
+                        )
+                    else:
+                        # No match found
+                        mappings[header] = VariableMapping(
+                            variable_name=header,
+                            mapped_header="",
+                            confidence_score=0.0,
+                            matching_method=f"no_match (AI: {ai_reason[:30]})",
+                            is_verified=False
                         )
             
             progress_bar.progress(1.0)
-            progress_bar.empty()
-            status_text.empty()
+            status_text.text("Matching complete!")
+            time.sleep(0.5)
             
         else:
-            status_text.text("Stage 2/3: AI not available, using lexical/fuzzy only...")
+            # No AI - use lexical/fuzzy only
+            status_text.text("Using lexical/fuzzy matching...")
             progress_bar.progress(0.5)
             
-            for header in headers:
+            for i, header in enumerate(headers):
                 best_score = 0.0
                 best_candidate = None
+                best_method = "no_match"
                 
                 for candidate in variables:
                     combined, method = self.calculate_combined_score(candidate, header)
                     if combined > best_score:
                         best_score = combined
                         best_candidate = candidate
+                        best_method = method
                 
-                if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
+                if best_candidate and best_score >= 0.5:
                     mappings[header] = VariableMapping(
                         variable_name=header,
                         mapped_header=best_candidate,
                         confidence_score=best_score,
-                        matching_method=method,
-                        is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
+                        matching_method=best_method,
+                        is_verified=best_score >= 0.8
                     )
+                
+                progress_bar.progress((i + 1) / len(headers))
             
-            progress_bar.progress(1.0)
-            progress_bar.empty()
-            status_text.empty()
+            status_text.text("Matching complete!")
+        
+        progress_bar.empty()
+        status_text.empty()
         
         return mappings
+
+
+    def calculate_combined_score(self, candidate: str, header: str) -> Tuple[float, str]:
+        """
+        Helper to calculate lexical + fuzzy score.
+        Returns (best_score, method_name)
+        """
+        lex_score = self.lexical_similarity(header, candidate)
+        fuzzy_score = self.fuzzy_similarity(header, candidate) / 100.0
+        
+        if lex_score > fuzzy_score:
+            return lex_score, "lexical"
+        else:
+            return fuzzy_score, "fuzzy"
     def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
         """
         Generic finder.
