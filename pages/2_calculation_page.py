@@ -699,10 +699,10 @@ def set_custom_css():
         }
 
         .stMultiSelect [data-baseweb="tag"] {
-            background-color: #e3f2fd !important;
-            color: #004DA8 !important;
+            background-color: #004DA8 !important;
+            color: white;
             border: 1px solid #004DA8 !important;
-            border-radius: 4px;
+            border-radius: 1px;
             font-weight: 600;
         }
 
@@ -1012,9 +1012,7 @@ def main():
                         st.markdown(f"**`{var}`** = `{formula}`")
         else:
             st.info("No variables detected.")
-        
-        # --- Add Custom Formula Section (Standard Block) ---
-        st.markdown("---")
+       
         st.subheader("➕ Add Custom Formula")
         
         custom_name = st.text_input("Name", placeholder="Custom_Calc", key="cf_name")
