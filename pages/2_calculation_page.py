@@ -643,6 +643,18 @@ def set_custom_css():
             color: white !important;
         }
 
+        /* Make the "Start Automatic Mapping" button much more obvious */
+        div.stButton > button[key="start_mapping_btn"] {
+            background: linear-gradient(90deg, #004DA8 0%, #0069d9 100%) !important;
+            width: 100% !important;
+            height: 50px !important;
+            font-size: 20px !important;
+            font-weight: 800 !important;
+            box-shadow: 0 4px 15px rgba(0, 77, 168, 0.6);
+            text-align: center;
+            border: 2px solid #003366;
+        }
+
         .streamlit-expander > div[role="button"] {
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%) !important;
             border-left: 6px solid #004DA8 !important;
@@ -677,6 +689,26 @@ def set_custom_css():
             color: white !important;
             padding: 15px 20px;
             font-weight: 700;
+        }
+
+        /* Custom Styling for Multiselect to remove red boxes and use Blue */
+        .stMultiSelect [data-baseweb="select"] {
+            border: 1px solid #004DA8 !important;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 77, 168, 0.2);
+        }
+
+        .stMultiSelect [data-baseweb="tag"] {
+            background-color: #e3f2fd !important;
+            color: #004DA8 !important;
+            border: 1px solid #004DA8 !important;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .stMultiSelect [data-baseweb="tag"]:hover {
+            background-color: #004DA8 !important;
+            color: white !important;
         }
 
         .confidence-high {
@@ -881,16 +913,14 @@ def main():
                     with st.expander("📊 Data Preview", expanded=False):
                         st.dataframe(df.head(10), use_container_width=True)
                     
-                    # --- NEW: Variable Selection Step ---
+                    # --- Filter Variables Step ---
                     st.markdown("---")
                     st.subheader("🛠️ Filter Variables for Mapping")
-                    st.markdown("Deselect variables that are **not** relevant to this specific Excel file. "
-                                "This prevents incorrect mappings (e.g., mapping 'N' to 'Name').")
+                    st.markdown("Deselect variables that are **not** relevant to this specific Excel file.")
                     
                     all_master_vars = get_all_master_variables()
                     
                     # Default to selecting all variables if it's a fresh file upload
-                    # (Heuristic: if headers changed, reset selection)
                     if st.session_state.selected_variables_for_mapping == [] or \
                        set(st.session_state.excel_headers) != set(st.session_state.get('last_uploaded_headers', [])):
                         st.session_state.selected_variables_for_mapping = all_master_vars
@@ -903,23 +933,16 @@ def main():
                         key="variable_filter_multiselect",
                         help="Variables NOT selected here will be ignored by the automatic mapper."
                     )
-                    # --------------------------------------
                     
-                    st.markdown("---")
-                    
-                    st.subheader("⚙️ Initial Matching (Lexical + Fuzzy)")
-                    
-                    st.info("🔄 **Strategy**: Uses fast lexical and fuzzy matching to map Excel Headers to Variables")
-                    
-                    if st.button("🔗 Start Automatic Mapping", type="primary", disabled=st.session_state.initial_mapping_done):
+                    # Button directly below
+                    st.markdown('<br>', unsafe_allow_html=True)
+                    if st.button("🔗 Start Automatic Mapping", type="primary", key="start_mapping_btn", disabled=st.session_state.initial_mapping_done):
                         with st.spinner("Analyzing headers and matching with variables..."):
-                            # Use the FILTERED list of variables from the user
                             active_variables = st.session_state.selected_variables_for_mapping
                             
                             matcher = VariableHeaderMatcher()
                             
                             # Map Headers -> Variables
-                            # We pass headers as targets and FILTERED variables as candidates
                             mappings = matcher.match_all(
                                 targets=headers,
                                 candidates=active_variables,
@@ -927,7 +950,6 @@ def main():
                             )
                             
                             # Update session state with Header -> Variable mapping
-                            # Mapping Object in class: variable_name=target(Header), mapped_header=candidate(Variable)
                             new_mapping = {}
                             for header, mapping_obj in mappings.items():
                                 new_mapping[header] = mapping_obj.mapped_header
@@ -957,6 +979,7 @@ def main():
                                 st.dataframe(method_df, hide_index=True, use_container_width=True)
                             
                             st.rerun()
+                    # --------------------------------------
     
     with col2:
         st.subheader("📋 Available Variables")
@@ -990,33 +1013,35 @@ def main():
         else:
             st.info("No variables detected.")
         
-        # Add custom formula section
+        # --- Add Custom Formula Section (Standard Block) ---
         st.markdown("---")
-        with st.expander("➕ Add Custom Formula", expanded=False):
-            custom_name = st.text_input("Name", placeholder="Custom_Calc", key="cf_name")
-            custom_expr = st.text_input("Expression", placeholder="var1 + var2 * 0.5", key="cf_expr")
-            
-            col_cf1, col_cf2 = st.columns([3, 1])
-            with col_cf1:
-                if st.button("Add", key="add_cf"):
-                    if custom_name and custom_expr:
-                        st.session_state.custom_formulas.append({
-                            'formula_name': custom_name,
-                            'formula_expression': custom_expr
-                        })
-                        st.success(f"✅ Added: {custom_name}")
+        st.subheader("➕ Add Custom Formula")
+        
+        custom_name = st.text_input("Name", placeholder="Custom_Calc", key="cf_name")
+        custom_expr = st.text_input("Expression", placeholder="var1 + var2 * 0.5", key="cf_expr")
+        
+        col_cf1, col_cf2 = st.columns([3, 1])
+        with col_cf1:
+            if st.button("Add", key="add_cf"):
+                if custom_name and custom_expr:
+                    st.session_state.custom_formulas.append({
+                        'formula_name': custom_name,
+                        'formula_expression': custom_expr
+                    })
+                    st.success(f"✅ Added: {custom_name}")
+                    st.rerun()
+        
+        if st.session_state.custom_formulas:
+            st.caption("**Custom Formulas:**")
+            for idx, cf in enumerate(st.session_state.custom_formulas):
+                col_a, col_b = st.columns([5, 1])
+                with col_a:
+                    st.caption(f"`{cf['formula_name']}`")
+                with col_b:
+                    if st.button("🗑️", key=f"del_cf_{idx}"):
+                        st.session_state.custom_formulas.pop(idx)
                         st.rerun()
-            
-            if st.session_state.custom_formulas:
-                st.caption("**Custom Formulas:**")
-                for idx, cf in enumerate(st.session_state.custom_formulas):
-                    col_a, col_b = st.columns([5, 1])
-                    with col_a:
-                        st.caption(f"`{cf['formula_name']}`")
-                    with col_b:
-                        if st.button("🗑️", key=f"del_cf_{idx}"):
-                            st.session_state.custom_formulas.pop(idx)
-                            st.rerun()
+        # ------------------------------------------------
                 
     
     # Variable Mapping Section
@@ -1043,8 +1068,6 @@ def main():
             st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 2px solid #004DA8;">', unsafe_allow_html=True)
             
             # Get current variables for dropdown
-            # Use the user's filtered selection + any manually added ones (if we tracked that, but here we just use the filtered list)
-            # Or safer: Use full list in dropdown but default to None if unmapped
             current_variables = get_all_master_variables()
             
             # Filter out removed headers
@@ -1064,7 +1087,6 @@ def main():
                     dropdown_options = ["(None of the following)"] + current_variables
                     
                     # Determine index safely
-                    # If current_var is empty or not found in options, default to index 0 (None of the following)
                     try:
                         idx = dropdown_options.index(current_var)
                     except ValueError:
@@ -1079,7 +1101,6 @@ def main():
                     )
                     
                     # Update mapping if changed
-                    # Treat "(None of the following)" as empty string
                     final_var = "" if new_var == "(None of the following)" else new_var
                     
                     if final_var != current_var:
@@ -1156,23 +1177,16 @@ def main():
             if st.button("🤖 Run AI Assist for Selected Headers", type="secondary", disabled=MOCK_MODE):
                 with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers..."):
                     matcher = VariableHeaderMatcher()
-                    # Get current variables (using the user filtered list keeps it consistent)
                     current_variables = st.session_state.selected_variables_for_mapping if st.session_state.selected_variables_for_mapping else get_all_master_variables()
                     
                     improved_count = 0
                     for header in selected_for_ai:
-                        # Use match_all with single target or find_best_match directly
-                        # Here we use find_best_match(Header, Variables)
                         improved_mapping = matcher.find_best_match(
                             header, 
                             current_variables, 
                             use_ai=True
                         )
                         if improved_mapping and improved_mapping.mapped_header:
-                            # Check if score is better than existing (conceptually)
-                            # Since we are using AI as an 'assist', we just overwrite if confidence is decent
-                            # or simply update. 
-                            # For simplicity, if AI found a match, we update it.
                             current_val = st.session_state.header_to_var_mapping.get(header)
                             if current_val != improved_mapping.mapped_header:
                                 st.session_state.header_to_var_mapping[header] = improved_mapping.mapped_header
@@ -1220,7 +1234,6 @@ def main():
         st.markdown("Variables in formulas have been replaced by the mapped Excel headers (shown in brackets).")
         
         # Pass the header->var mapping to the apply function
-        # Note: apply_mappings_to_formulas expects {Header: Var} logic now
         mapped_formulas = apply_mappings_to_formulas(
             st.session_state.formulas,
             st.session_state.header_to_var_mapping
