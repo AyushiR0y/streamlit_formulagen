@@ -1169,27 +1169,37 @@ def main():
                 with col1:
                     st.text_input("Header", value=header, key=f"h_txt_{header}", label_visibility="collapsed", disabled=True)
                 
+                # In your mapping table section, find where you create the selectbox and replace it with this:
+
                 with col2:
                     # Dropdown options: (None) + all variables
                     dropdown_options = ["(None of the following)"] + current_variables
                     
-                    # Determine index safely
-                    try:
+                    # Get the current mapped variable from session state
+                    current_var = st.session_state.header_to_var_mapping.get(header, "")
+                    
+                    # Determine index - IMPORTANT: This must recalculate every time
+                    if current_var and current_var in dropdown_options:
                         idx = dropdown_options.index(current_var)
-                    except ValueError:
-                        idx = 0
+                    else:
+                        idx = 0  # Default to "(None of the following)"
+                    
+                    # Use a unique key that includes the current value to force refresh
+                    # This is the KEY FIX - adding current_var to the key forces widget recreation
+                    widget_key = f"var_select_{header}_{current_var}"
                     
                     new_var = st.selectbox(
                         "Variable",
                         options=dropdown_options,
                         index=idx,
-                        key=f"var_select_{header}",
+                        key=widget_key,
                         label_visibility="collapsed"
                     )
                     
                     # Update mapping if changed
                     final_var = "" if new_var == "(None of the following)" else new_var
                     
+                    # Only update if different from what's in session state
                     if final_var != current_var:
                         st.session_state.header_to_var_mapping[header] = final_var
                 
