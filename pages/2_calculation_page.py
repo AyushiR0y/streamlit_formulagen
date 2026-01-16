@@ -439,12 +439,14 @@ class VariableHeaderMatcher:
                 best_method = "fuzzy"
         
         # Stage 3: AI semantic matching (only if enabled)
-        if use_ai and best_candidate:
-            ai_score, ai_method = self.semantic_similarity_ai(target, best_candidate)
+        # AI compares header against ALL candidates at once
+        if use_ai:
+            ai_variable, ai_score, ai_reason = self.semantic_similarity_ai(target, candidates)
             
-            if ai_score > best_score:
+            if ai_score > best_score and ai_variable:
                 best_score = ai_score
-                best_method = ai_method
+                best_candidate = ai_variable
+                best_method = f"semantic_ai ({ai_reason[:50]}...)"
         
         if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
             return VariableMapping(
@@ -456,7 +458,6 @@ class VariableHeaderMatcher:
             )
         
         return None
-    
     def match_all(self, targets: List[str], candidates: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
         """
         Maps all targets to best candidates.
