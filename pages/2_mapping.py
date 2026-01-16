@@ -443,54 +443,54 @@ class VariableHeaderMatcher:
         
         return mappings
         
-        def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
-            """
-            Generic finder.
-            Finds the best matching candidate for the target.
-            Used as: find_best_match(Excel_Header, Variable_List)
-            """
-            best_score = 0.0
-            best_candidate = None
-            best_method = "no_match"
+    def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
+        """
+        Generic finder.
+        Finds the best matching candidate for the target.
+        Used as: find_best_match(Excel_Header, Variable_List)
+        """
+        best_score = 0.0
+        best_candidate = None
+        best_method = "no_match"
+        
+        # Stage 1: Lexical matching
+        for candidate in candidates:
+            lex_score = self.lexical_similarity(target, candidate)
             
-            # Stage 1: Lexical matching
-            for candidate in candidates:
-                lex_score = self.lexical_similarity(target, candidate)
-                
-                if lex_score > best_score:
-                    best_score = lex_score
-                    best_candidate = candidate
-                    best_method = "lexical"
+            if lex_score > best_score:
+                best_score = lex_score
+                best_candidate = candidate
+                best_method = "lexical"
+        
+        # Stage 2: Fuzzy matching
+        for candidate in candidates:
+            fuzzy_score = self.fuzzy_similarity(target, candidate)
             
-            # Stage 2: Fuzzy matching
-            for candidate in candidates:
-                fuzzy_score = self.fuzzy_similarity(target, candidate)
-                
-                if fuzzy_score > best_score:
-                    best_score = fuzzy_score
-                    best_candidate = candidate
-                    best_method = "fuzzy"
+            if fuzzy_score > best_score:
+                best_score = fuzzy_score
+                best_candidate = candidate
+                best_method = "fuzzy"
+        
+        # Stage 3: AI semantic matching (only if enabled)
+        # AI compares header against ALL candidates at once
+        if use_ai:
+            ai_variable, ai_score, ai_reason = self.semantic_similarity_ai(target, candidates)
             
-            # Stage 3: AI semantic matching (only if enabled)
-            # AI compares header against ALL candidates at once
-            if use_ai:
-                ai_variable, ai_score, ai_reason = self.semantic_similarity_ai(target, candidates)
-                
-                if ai_score > best_score and ai_variable:
-                    best_score = ai_score
-                    best_candidate = ai_variable
-                    best_method = f"semantic_ai ({ai_reason[:50]}...)"
-            
-            if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
-                return VariableMapping(
-                    variable_name=target, # In this context, the variable_name is the Header we are mapping
-                    mapped_header=best_candidate, # The mapped_header is the Variable found
-                    confidence_score=best_score,
-                    matching_method=best_method,
-                    is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
-                )
-            
-            return None
+            if ai_score > best_score and ai_variable:
+                best_score = ai_score
+                best_candidate = ai_variable
+                best_method = f"semantic_ai ({ai_reason[:50]}...)"
+        
+        if best_candidate and best_score >= CONFIDENCE_THRESHOLDS['low']:
+            return VariableMapping(
+                variable_name=target, # In this context, the variable_name is the Header we are mapping
+                mapped_header=best_candidate, # The mapped_header is the Variable found
+                confidence_score=best_score,
+                matching_method=best_method,
+                is_verified=best_score >= CONFIDENCE_THRESHOLDS['high']
+            )
+        
+        return None
     def match_all(self, targets: List[str], candidates: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
         """
         Maps all targets to best candidates.
@@ -1107,111 +1107,7 @@ def main():
         with col_stat3:
             st.metric("Mapped Variables", mapped_count)
         
-        # AI Enhancement Section
-        st.markdown("---")
-        st.subheader("🤖 AI-Powered Enhancement")
-
-        # Initialize session state for AI assist if not exists
-        if 'ai_assist_headers' not in st.session_state:
-            st.session_state.ai_assist_headers = []
-
-        # Track if we just completed AI mapping
-        if 'ai_mapping_complete' not in st.session_state:
-            st.session_state.ai_mapping_complete = False
-
-        if 'ai_changes_made' not in st.session_state:
-            st.session_state.ai_changes_made = []
-
-        # Multiselect for choosing headers for AI assist
-        active_headers_list = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
-
-        # Use on_change callback to persist selection
-        def update_ai_headers():
-            st.session_state.ai_assist_headers = st.session_state.ai_header_select
-
-        selected_for_ai = st.multiselect(
-            "Select headers for AI semantic matching:",
-            options=active_headers_list,
-            default=st.session_state.ai_assist_headers,
-            key="ai_header_select",
-            on_change=update_ai_headers,
-            help="Choose headers where you want AI to find better variable matches"
-        )
-
-        # Show results from previous AI run if available
-        if st.session_state.ai_mapping_complete and st.session_state.ai_changes_made:
-            improved_count = len(st.session_state.ai_changes_made)
-            st.success(f"✅ AI updated {improved_count} mapping(s) in one batch!")
-            
-            # Show what changed in a nice table
-            with st.expander("📝 View Changes", expanded=True):
-                changes_df = pd.DataFrame(st.session_state.ai_changes_made)
-                changes_df['confidence'] = changes_df['score'].apply(lambda x: f"{x:.2%}")
-                changes_df = changes_df[['header', 'old', 'new', 'confidence', 'reason']]
-                changes_df.columns = ['Header', 'Previous', 'New Variable', 'Confidence', 'Reason']
-                st.dataframe(changes_df, use_container_width=True, hide_index=True)
-            
-            # Reset flag after showing
-            if st.button("✓ Got it", key="clear_ai_results"):
-                st.session_state.ai_mapping_complete = False
-                st.session_state.ai_changes_made = []
-                st.rerun()
-
-        elif st.session_state.ai_mapping_complete and not st.session_state.ai_changes_made:
-            st.info("ℹ️ No improvements found. Current mappings are optimal.")
-            if st.button("✓ Got it", key="clear_ai_no_results"):
-                st.session_state.ai_mapping_complete = False
-                st.rerun()
-
-        if selected_for_ai:
-            col_ai1, col_ai2 = st.columns([2, 3])
-            
-            with col_ai1:
-                if st.button("🤖 Run AI Assist (Batch)", type="primary", key="ai_assist_btn", disabled=MOCK_MODE):
-                    with st.spinner(f"Running AI semantic matching on {len(selected_for_ai)} headers in one batch..."):
-                        matcher = VariableHeaderMatcher()
-                        current_variables = st.session_state.selected_variables_for_mapping if st.session_state.selected_variables_for_mapping else get_all_master_variables()
-                        
-                        # Process ALL headers in ONE AI call
-                        batch_results = matcher.semantic_similarity_ai_batch(selected_for_ai, current_variables)
-                        
-                        improved_count = 0
-                        changes_made = []
-                        
-                        for header, (ai_variable, ai_score, ai_reason) in batch_results.items():
-                            if ai_variable and ai_score >= CONFIDENCE_THRESHOLDS['low']:
-                                current_val = st.session_state.header_to_var_mapping.get(header, "")
-                                
-                                if current_val != ai_variable:
-                                    # Update the mapping - THIS IS THE KEY PART
-                                    st.session_state.header_to_var_mapping[header] = ai_variable
-                                    improved_count += 1
-                                    changes_made.append({
-                                        'header': header,
-                                        'old': current_val or '(None)',
-                                        'new': ai_variable,
-                                        'score': ai_score,
-                                        'reason': ai_reason
-                                    })
-                        
-                        # Store results in session state
-                        st.session_state.ai_changes_made = changes_made
-                        st.session_state.ai_mapping_complete = True
-                        
-                        # Clear selection after processing
-                        st.session_state.ai_assist_headers = []
-                        
-                        # Force rerun to show updated mappings
-                        st.rerun()
-            
-            with col_ai2:
-                st.info(f"💡 {len(selected_for_ai)} header(s) selected | Will process in ONE AI call")
-        else:
-            if not st.session_state.ai_mapping_complete:
-                st.info("💡 Select headers above and click AI assist to improve their mappings")
-
-        if MOCK_MODE:
-            st.warning("⚠️ AI assist is disabled. Configure Azure OpenAI credentials to enable.")
+        
         
         # --- Confirm & Export Section ---
         st.markdown("---")
