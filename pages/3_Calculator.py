@@ -382,24 +382,32 @@ def main():
     
     st.markdown("---")
     
-    # === MAPPING MANAGEMENT SECTION ===
-    st.subheader("🗺️ Variable Mapping Management")
+    # Check if mappings exist
+    has_mappings = 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping
     
-    mapping_tabs = st.tabs(["📥 Import Mappings", "📤 Export Mappings", "✏️ Current Mappings"])
-    
-    # Import Tab
-    with mapping_tabs[0]:
-        st.markdown("### Import Variable Mappings")
-        st.info("Upload a previously saved mapping file (JSON or Excel) to restore your variable mappings.")
+    # === CONDITIONAL MAPPING SECTION ===
+    if not has_mappings:
+        st.warning("⚠️ No variable mappings found in session.")
+        st.info("💡 You can either go back to the **Variable Mapping** page to create mappings, or upload a previously saved mapping file below.")
+        
+        st.markdown("---")
+        st.subheader("📥 Import Variable Mappings")
         
         col_import1, col_import2 = st.columns(2)
         
         with col_import1:
-            st.markdown("#### JSON Format")
+            st.markdown("#### Upload JSON Mapping")
+            st.code("""{
+  "Excel_Header_1": "variable_name_1",
+  "Excel_Header_2": "variable_name_2",
+  "Age": "age_var"
+}""", language="json")
+            
             uploaded_json = st.file_uploader(
                 "Upload JSON mapping file",
                 type=['json'],
-                key="json_uploader"
+                key="json_uploader",
+                help="Upload a JSON file with header-to-variable mappings"
             )
             
             if uploaded_json:
@@ -419,11 +427,14 @@ def main():
                     st.error(f"❌ Error importing JSON: {str(e)}")
         
         with col_import2:
-            st.markdown("#### Excel Format")
+            st.markdown("#### Upload Excel Mapping")
+            st.markdown("Excel file should have columns: `Excel_Header` and `Variable_Name`")
+            
             uploaded_excel = st.file_uploader(
                 "Upload Excel mapping file",
                 type=['xlsx', 'xls'],
-                key="excel_mapping_uploader"
+                key="excel_mapping_uploader",
+                help="Upload an Excel file with 'Excel_Header' and 'Variable_Name' columns"
             )
             
             if uploaded_excel:
@@ -445,70 +456,50 @@ def main():
                 
                 except Exception as e:
                     st.error(f"❌ Error importing Excel: {str(e)}")
-    
-    # Export Tab
-    with mapping_tabs[1]:
-        st.markdown("### Export Current Mappings")
         
-        if 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping:
-            st.success(f"✅ {len(st.session_state.header_to_var_mapping)} mappings available for export")
-            
-            col_export1, col_export2 = st.columns(2)
-            
-            with col_export1:
-                st.markdown("#### Export as JSON")
-                json_data = export_mappings_to_json(st.session_state.header_to_var_mapping)
-                
-                st.download_button(
-                    label="📥 Download JSON",
-                    data=json_data,
-                    file_name="variable_mappings.json",
-                    mime="application/json"
-                )
-                
-                with st.expander("Preview JSON"):
-                    st.code(json_data, language="json")
-            
-            with col_export2:
-                st.markdown("#### Export as Excel")
-                excel_data = export_mappings_to_excel(st.session_state.header_to_var_mapping)
-                
-                st.download_button(
-                    label="📥 Download Excel",
-                    data=excel_data,
-                    file_name="variable_mappings.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                
-                with st.expander("Preview Excel format"):
-                    df_preview = pd.DataFrame([
-                        {"Excel_Header": k, "Variable_Name": v}
-                        for k, v in st.session_state.header_to_var_mapping.items()
-                    ])
-                    st.dataframe(df_preview, use_container_width=True)
-        else:
-            st.warning("⚠️ No mappings available to export. Please complete the mapping step first.")
+        st.markdown("---")
+        st.info("👈 After importing mappings, the calculation engine will become available.")
+        return
     
-    # Current Mappings Tab
-    with mapping_tabs[2]:
-        st.markdown("### Current Variable Mappings")
+    # === MAPPING EXPORT SECTION (only shown if mappings exist) ===
+    with st.expander("💾 Export Current Mappings"):
+        st.markdown("Save your current mappings for future use")
         
-        if 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping:
-            st.success(f"✅ {len(st.session_state.header_to_var_mapping)} active mappings")
+        col_export1, col_export2 = st.columns(2)
+        
+        with col_export1:
+            st.markdown("#### Export as JSON")
+            json_data = export_mappings_to_json(st.session_state.header_to_var_mapping)
             
-            df_current = pd.DataFrame([
-                {"Excel_Header": k, "Variable_Name": v}
-                for k, v in st.session_state.header_to_var_mapping.items()
-            ])
-            st.dataframe(df_current, use_container_width=True, height=300)
+            st.download_button(
+                label="📥 Download JSON",
+                data=json_data,
+                file_name="variable_mappings.json",
+                mime="application/json",
+                help="Download mappings as JSON file"
+            )
+        
+        with col_export2:
+            st.markdown("#### Export as Excel")
+            excel_data = export_mappings_to_excel(st.session_state.header_to_var_mapping)
             
-            if st.button("🗑️ Clear All Mappings", type="secondary"):
-                if st.button("⚠️ Confirm Clear", type="secondary"):
-                    del st.session_state.header_to_var_mapping
-                    st.success("Mappings cleared!")
-                    st.rerun()
-        else:
-            st.info("No mappings currently loaded. Import a mapping file or go to the Variable Mapping page.")
+            st.download_button(
+                label="📥 Download Excel",
+                data=excel_data,
+                file_name="variable_mappings.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Download mappings as Excel file"
+            )
+    
+    # Show current mappings summary
+    st.success(f"✅ {len(st.session_state.header_to_var_mapping)} variable mappings loaded")
+    
+    with st.expander("🔍 View Current Mappings"):
+        df_current = pd.DataFrame([
+            {"Excel_Header": k, "Variable_Name": v}
+            for k, v in st.session_state.header_to_var_mapping.items()
+        ])
+        st.dataframe(df_current, use_container_width=True)
     
     st.markdown("---")
     
@@ -519,21 +510,11 @@ def main():
         st.error("❌ No Excel data found. Please upload data in the previous step.")
         st.info("💡 Go back to **Variable Mapping** to upload your file.")
         return
-
-    if 'header_to_var_mapping' not in st.session_state:
-        st.error("❌ No mappings found. Please complete the mapping step first or import a mapping file above.")
-        return
     
     if 'formulas' not in st.session_state or not st.session_state.formulas:
         st.error("❌ No formulas found. Please extract formulas first.")
+        st.info("💡 Go back to **Formula Extraction** to extract formulas from your document.")
         return
-    
-    # Debug: Show current mappings and formulas
-    with st.expander("🔍 Debug: Current Configuration"):
-        st.write("**Mappings:**")
-        st.json(st.session_state.header_to_var_mapping)
-        st.write("**Formulas:**")
-        st.json(st.session_state.formulas)
     
     # Option to reupload or use existing
     st.subheader("📊 Data Source")
@@ -640,9 +621,6 @@ def main():
                         )
                     
                     st.info(f"📊 Using {len(transformed_mappings)} variable mappings")
-                    st.write("Mappings:")
-                    for var, mapping in transformed_mappings.items():
-                        st.write(f"  - {var} → {mapping.mapped_header}")
                     
                     formulas_to_run = st.session_state.formulas
                     
