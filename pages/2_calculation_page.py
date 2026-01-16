@@ -44,9 +44,9 @@ else:
 
 # Confidence thresholds
 CONFIDENCE_THRESHOLDS = {
-    'high': 0.85,
-    'medium': 0.60,
-    'low': 0.40
+    'high': 0.90,    # Must be very similar
+    'medium': 0.80,  # Good similarity
+    'low': 0.75       # Minimum similarity to accept a match (Raised from 0.40)
 }
 # --- INPUT VARIABLES DEFINITIONS ---
 INPUT_VARIABLES = {
@@ -187,7 +187,7 @@ class VariableHeaderMatcher:
         return 0.0
     
     def fuzzy_similarity(self, var: str, header: str) -> float:
-        """Calculate fuzzy string similarity with Length Penalty to avoid 'N' matching 'Number'"""
+        """Calculate fuzzy string similarity with Strict Length Penalty"""
         var_norm = self.normalize_text(var)
         header_norm = self.normalize_text(header)
         
@@ -204,14 +204,21 @@ class VariableHeaderMatcher:
         # Weighted average favoring token-based matching
         score = (ratio * 0.2 + partial_ratio * 0.2 + token_sort_ratio * 0.3 + token_set_ratio * 0.3)
         
-        # --- IMPROVEMENT: Length Penalty ---
-        # If a variable is very short (e.g., "N") and the header is long (e.g., "Net Income"),
-        # drastically reduce the score to prevent false positives.
+        # --- STRICT LENGTH PENALTY ---
+        # If strings are vastly different lengths, they are likely not a match
         len_diff = abs(len(var) - len(header))
-        if len(var) <= 2 and len(header) > 8:
-            score = score * 0.1  # 90% penalty
+        
+        # Case 1: Very short variable (e.g. "N") matching a long header (e.g. "Net Premium")
+        if len(var) <= 2 and len(header) > 6:
+            score = score * 0.05  # 95% penalty
+            
+        # Case 2: General large size difference
         elif len_diff > 10:
-            score = score * 0.7  # Moderate penalty for large size differences
+            score = score * 0.5  # 50% penalty
+        
+        # Case 3: Moderate size difference
+        elif len_diff > 5:
+            score = score * 0.8  # 20% penalty
             
         return score
     
@@ -833,22 +840,21 @@ def main():
                     st.markdown('<br>', unsafe_allow_html=True)
                     if st.button("🔗 Start Automatic Mapping", type="primary", key="start_mapping_btn", disabled=st.session_state.initial_mapping_done):
                         with st.spinner("Analyzing headers and matching with variables..."):
-                            # 1. Get ACTIVE (Filtered) variables
-                            active_variables = st.session_state.selected_variables_for_mapping
-                            
-                            # 2. CLEAR OLD MAPPINGS (Crucial step)
+                            # 1. CLEAR OLD MAPPINGS
                             st.session_state.header_to_var_mapping = {}
                             
+                            active_variables = st.session_state.selected_variables_for_mapping
                             matcher = VariableHeaderMatcher()
                             
-                            # 3. Map Headers -> Variables
+                            # 2. Map Headers -> Variables
+                            # If threshold (0.75) isn't met, mapping_obj.mapped_header will be ""
                             mappings = matcher.match_all(
                                 targets=headers,
-                                candidates=active_variables,  # ONLY use filtered variables
+                                candidates=active_variables,
                                 use_ai=False
                             )
                             
-                            # 4. Update session state
+                            # 3. Update session state
                             new_mapping = {}
                             for header, mapping_obj in mappings.items():
                                 new_mapping[header] = mapping_obj.mapped_header
