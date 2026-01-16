@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import os
 import math
 from datetime import datetime, date
+import json
 
 # Load Common CSS
 def load_css(file_name="style.css"):
@@ -37,6 +38,68 @@ class VariableMapping:
     confidence_score: float = 0.0
     matching_method: str = "manual"
     is_verified: bool = True
+
+# --- Mapping Import/Export Functions ---
+def export_mappings_to_json(mappings: Dict[str, str]) -> str:
+    """Export mappings to JSON string"""
+    return json.dumps(mappings, indent=2)
+
+def export_mappings_to_excel(mappings: Dict[str, str]) -> bytes:
+    """Export mappings to Excel bytes"""
+    from io import BytesIO
+    
+    # Create DataFrame from mappings
+    df = pd.DataFrame([
+        {"Excel_Header": header, "Variable_Name": var_name}
+        for header, var_name in mappings.items()
+    ])
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Mappings')
+    
+    return output.getvalue()
+
+def import_mappings_from_json(json_file) -> Dict[str, str]:
+    """Import mappings from JSON file"""
+    try:
+        content = json_file.read()
+        mappings = json.loads(content)
+        
+        # Validate structure
+        if not isinstance(mappings, dict):
+            raise ValueError("JSON must contain a dictionary/object")
+        
+        # Convert all keys and values to strings
+        return {str(k): str(v) for k, v in mappings.items()}
+    
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format: {str(e)}")
+    except Exception as e:
+        raise ValueError(f"Error reading JSON: {str(e)}")
+
+def import_mappings_from_excel(excel_file) -> Dict[str, str]:
+    """Import mappings from Excel file"""
+    try:
+        df = pd.read_excel(excel_file)
+        
+        # Check for required columns
+        if 'Excel_Header' not in df.columns or 'Variable_Name' not in df.columns:
+            raise ValueError("Excel file must contain 'Excel_Header' and 'Variable_Name' columns")
+        
+        # Create mappings dictionary
+        mappings = {}
+        for _, row in df.iterrows():
+            header = str(row['Excel_Header']).strip()
+            var_name = str(row['Variable_Name']).strip()
+            
+            if header and var_name and header != 'nan' and var_name != 'nan':
+                mappings[header] = var_name
+        
+        return mappings
+    
+    except Exception as e:
+        raise ValueError(f"Error reading Excel: {str(e)}")
 
 # --- Helper Functions ---
 def safe_convert_to_number(value: Any) -> float:
@@ -319,6 +382,138 @@ def main():
     
     st.markdown("---")
     
+    # === MAPPING MANAGEMENT SECTION ===
+    st.subheader("🗺️ Variable Mapping Management")
+    
+    mapping_tabs = st.tabs(["📥 Import Mappings", "📤 Export Mappings", "✏️ Current Mappings"])
+    
+    # Import Tab
+    with mapping_tabs[0]:
+        st.markdown("### Import Variable Mappings")
+        st.info("Upload a previously saved mapping file (JSON or Excel) to restore your variable mappings.")
+        
+        col_import1, col_import2 = st.columns(2)
+        
+        with col_import1:
+            st.markdown("#### JSON Format")
+            uploaded_json = st.file_uploader(
+                "Upload JSON mapping file",
+                type=['json'],
+                key="json_uploader"
+            )
+            
+            if uploaded_json:
+                try:
+                    imported_mappings = import_mappings_from_json(uploaded_json)
+                    st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from JSON")
+                    
+                    with st.expander("Preview imported mappings"):
+                        st.json(imported_mappings)
+                    
+                    if st.button("✔️ Apply JSON Mappings", type="primary", key="apply_json"):
+                        st.session_state.header_to_var_mapping = imported_mappings
+                        st.success("✅ Mappings applied to session!")
+                        st.rerun()
+                
+                except Exception as e:
+                    st.error(f"❌ Error importing JSON: {str(e)}")
+        
+        with col_import2:
+            st.markdown("#### Excel Format")
+            uploaded_excel = st.file_uploader(
+                "Upload Excel mapping file",
+                type=['xlsx', 'xls'],
+                key="excel_mapping_uploader"
+            )
+            
+            if uploaded_excel:
+                try:
+                    imported_mappings = import_mappings_from_excel(uploaded_excel)
+                    st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from Excel")
+                    
+                    with st.expander("Preview imported mappings"):
+                        df_preview = pd.DataFrame([
+                            {"Excel_Header": k, "Variable_Name": v}
+                            for k, v in imported_mappings.items()
+                        ])
+                        st.dataframe(df_preview, use_container_width=True)
+                    
+                    if st.button("✔️ Apply Excel Mappings", type="primary", key="apply_excel"):
+                        st.session_state.header_to_var_mapping = imported_mappings
+                        st.success("✅ Mappings applied to session!")
+                        st.rerun()
+                
+                except Exception as e:
+                    st.error(f"❌ Error importing Excel: {str(e)}")
+    
+    # Export Tab
+    with mapping_tabs[1]:
+        st.markdown("### Export Current Mappings")
+        
+        if 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping:
+            st.success(f"✅ {len(st.session_state.header_to_var_mapping)} mappings available for export")
+            
+            col_export1, col_export2 = st.columns(2)
+            
+            with col_export1:
+                st.markdown("#### Export as JSON")
+                json_data = export_mappings_to_json(st.session_state.header_to_var_mapping)
+                
+                st.download_button(
+                    label="📥 Download JSON",
+                    data=json_data,
+                    file_name="variable_mappings.json",
+                    mime="application/json"
+                )
+                
+                with st.expander("Preview JSON"):
+                    st.code(json_data, language="json")
+            
+            with col_export2:
+                st.markdown("#### Export as Excel")
+                excel_data = export_mappings_to_excel(st.session_state.header_to_var_mapping)
+                
+                st.download_button(
+                    label="📥 Download Excel",
+                    data=excel_data,
+                    file_name="variable_mappings.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                
+                with st.expander("Preview Excel format"):
+                    df_preview = pd.DataFrame([
+                        {"Excel_Header": k, "Variable_Name": v}
+                        for k, v in st.session_state.header_to_var_mapping.items()
+                    ])
+                    st.dataframe(df_preview, use_container_width=True)
+        else:
+            st.warning("⚠️ No mappings available to export. Please complete the mapping step first.")
+    
+    # Current Mappings Tab
+    with mapping_tabs[2]:
+        st.markdown("### Current Variable Mappings")
+        
+        if 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping:
+            st.success(f"✅ {len(st.session_state.header_to_var_mapping)} active mappings")
+            
+            df_current = pd.DataFrame([
+                {"Excel_Header": k, "Variable_Name": v}
+                for k, v in st.session_state.header_to_var_mapping.items()
+            ])
+            st.dataframe(df_current, use_container_width=True, height=300)
+            
+            if st.button("🗑️ Clear All Mappings", type="secondary"):
+                if st.button("⚠️ Confirm Clear", type="secondary"):
+                    del st.session_state.header_to_var_mapping
+                    st.success("Mappings cleared!")
+                    st.rerun()
+        else:
+            st.info("No mappings currently loaded. Import a mapping file or go to the Variable Mapping page.")
+    
+    st.markdown("---")
+    
+    # === REST OF THE CALCULATION ENGINE ===
+    
     # Check for required session state
     if 'excel_df' not in st.session_state or st.session_state.excel_df is None:
         st.error("❌ No Excel data found. Please upload data in the previous step.")
@@ -326,7 +521,7 @@ def main():
         return
 
     if 'header_to_var_mapping' not in st.session_state:
-        st.error("❌ No mappings found. Please complete the mapping step first.")
+        st.error("❌ No mappings found. Please complete the mapping step first or import a mapping file above.")
         return
     
     if 'formulas' not in st.session_state or not st.session_state.formulas:
