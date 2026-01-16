@@ -624,20 +624,34 @@ def get_all_master_variables():
             all_vars.update(cf_derived.keys())
             
     return sorted(list(all_vars))
+import os
+import streamlit as st
+
 def load_css(file_name="style.css"):
     """
-    Reads a CSS file and injects it into the Streamlit app.
+    Loads CSS file. Automatically handles cases where the script
+    is inside a 'pages' subdirectory by looking one level up.
     """
-    # Determine the path to the CSS file relative to this script
+    # 1. Get the directory where this script is currently running from
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    css_path = os.path.join(current_dir, file_name)
     
+    # 2. Check if we are inside a 'pages' folder
+    # If yes, we need to look one level up ('..') to find the CSS
+    if os.path.basename(current_dir) == "pages":
+        css_path = os.path.join(current_dir, "..", file_name)
+    else:
+        css_path = os.path.join(current_dir, file_name)
+    
+    # 3. Normalize the path (converts ".." to actual parent path)
+    css_path = os.path.normpath(css_path)
+    
+    # 4. Load and inject the CSS
     if os.path.exists(css_path):
         with open(css_path, 'r') as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     else:
-        st.warning(f"⚠️ {file_name} not found. Using default styles.")
-
+        # If it still fails, show exactly where it looked
+        st.error(f"⚠️ CSS file not found at: `{css_path}`. <br>Please ensure `style.css` is in the main project folder.", unsafe_allow_html=True)
 def main():
     load_css()
 
