@@ -1247,9 +1247,6 @@ def main():
                 st.info(f"💡 {len(selected_for_ai)} header(s) selected for AI enhancement")
         else:
             st.info("💡 Select headers above and click the AI assist button to improve their mappings")
-
-if MOCK_MODE:
-    st.warning("⚠️ AI assist is disabled. Configure Azure OpenAI credentials to enable.")
         
         # Proceed button
         st.markdown("---")
