@@ -89,6 +89,117 @@ DEFAULT_TARGET_OUTPUT_VARIABLES = [
     'PAID_UP_SA_ON_DEATH', 'paid_up_income_benefit_amount',
     'SSV1_AMT', 'SSV2_AMT', 'SSV3_AMT', 'SSV', 'SURRENDER_PAID_AMOUNT',
 ]
+def extract_variables_from_formulas(formulas: List[Dict]) -> Tuple[Set[str], Dict[str, str]]:
+    """Extract all unique variables from formula expressions AND calculation steps
+    Returns: (all_variables, derived_variables_mapping)
+    """
+    variables = set()
+    derived_vars = {}  # Maps derived var to its formula
+    
+    # Pattern to match variable names
+    var_pattern = r'\b([a-zA-Z][a-zA-Z0-9_]*)\b'
+    
+    for formula in formulas:
+        # Extract from main formula expression
+        expr = formula.get('formula_expression', '')
+        matches = re.findall(var_pattern, expr)
+        variables.update(matches)
+        
+        # Extract from calculation steps (intermediate variables created by AI)
+        calc_steps = formula.get('calculation_steps', [])
+        if isinstance(calc_steps, list):
+            for step in calc_steps:
+                if isinstance(step, dict):
+                    step_text = step.get('step', '') + ' ' + step.get('formula', '')
+                    step_formula = step.get('formula', '')
+                    step_matches = re.findall(var_pattern, step_text)
+                    variables.update(step_matches)
+                    
+                    # Try to identify derived variable definitions (e.g., "variable_name = expression")
+                    derived_match = re.match(r'([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+)', step_formula)
+                    if derived_match:
+                        var_name = derived_match.group(1)
+                        var_formula = derived_match.group(2)
+                        derived_vars[var_name] = var_formula
+                        
+                elif isinstance(step, str):
+                    step_matches = re.findall(var_pattern, step)
+                    variables.update(step_matches)
+                    
+                    # Try to identify derived variable definitions
+                    derived_match = re.match(r'([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+)', step)
+                    if derived_match:
+                        var_name = derived_match.group(1)
+                        var_formula = derived_match.group(2)
+                        derived_vars[var_name] = var_formula
+    
+    # Expanded filter list
+    operators = {
+        'MAX', 'MIN', 'SUM', 'AVG', 'AVERAGE', 'IF', 'THEN', 'ELSE', 'AND', 'OR', 'NOT',
+        'ROUND', 'CEILING', 'FLOOR', 'ABS', 'POWER', 'SQRT', 'MOD', 'INT',
+        'COUNT', 'VLOOKUP', 'INDEX', 'MATCH', 'ISERROR', 'ISBLANK',
+        'TRUE', 'FALSE', 'NA', 'PI', 'EXP', 'LN', 'LOG', 'LOG10',
+        'SIN', 'COS', 'TAN', 'ASIN', 'ACOS', 'ATAN',
+        'CONCATENATE', 'LEFT', 'RIGHT', 'MID', 'LEN', 'TRIM',
+        'UPPER', 'LOWER', 'PROPER', 'SUBSTITUTE', 'REPLACE',
+        'TODAY', 'NOW', 'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND',
+        'DATE', 'TIME', 'DATEVALUE', 'TIMEVALUE',
+        'COUNTIF', 'SUMIF', 'AVERAGEIF', 'MAXIFS', 'MINIFS',
+        'LOOKUP', 'HLOOKUP', 'CHOOSE', 'OFFSET',
+        'for', 'while', 'do', 'break', 'continue', 'return',
+        'def', 'class', 'import', 'from', 'as', 'with',
+        'try', 'except', 'finally', 'raise', 'assert',
+        'in', 'is', 'None', 'True', 'False',
+        'div', 'mod', 'abs', 'max', 'min', 'sum', 'avg',
+        'Step', 'Calculate', 'Formula', 'Result', 'Value'
+    }
+    
+    operators_normalized = {op.upper() for op in operators} | {op.lower() for op in operators}
+    
+    # Filter out operators and purely numeric strings
+    variables = {v for v in variables if v not in operators_normalized and not v.isdigit()}
+    
+    return variables, derived_vars
+
+def load_excel_file(file_bytes, file_extension: str) -> Tuple[pd.DataFrame, List[str]]:
+    """Load Excel file and extract headers"""
+    try:
+        if file_extension == '.csv':
+            df = pd.read_csv(pd.io.common.BytesIO(file_bytes))
+        else:
+            df = pd.read_excel(pd.io.common.BytesIO(file_bytes))
+        
+        # Get headers (column names)
+        headers = df.columns.tolist()
+        
+        return df, headers
+    
+    except Exception as e:
+        st.error(f"Error loading Excel file: {e}")
+        return None, []
+def get_all_master_variables():
+    """Aggregates variables from Input, Formula, Derived, and Custom sources"""
+    all_vars = set()
+    
+    # 1. Static Input Variables
+    all_vars.update(INPUT_VARIABLES.keys())
+    
+    # 2. Extracted from Main Formulas
+    # extract_variables_from_formulas already handles 'calculation_steps', 
+    # so we don't need to loop through formulas again manually.
+    if 'formulas' in st.session_state and st.session_state.formulas:
+        formula_vars, derived_defs = extract_variables_from_formulas(st.session_state.formulas)
+        all_vars.update(formula_vars)
+        all_vars.update(derived_defs.keys())
+    
+    # 3. Extracted from Custom Formulas
+    # Same here - just call the helper once.
+    if 'custom_formulas' in st.session_state and st.session_state.custom_formulas:
+        cf_vars, cf_derived = extract_variables_from_formulas(st.session_state.custom_formulas)
+        all_vars.update(cf_vars)
+        all_vars.update(cf_derived.keys())
+            
+    return sorted(list(all_vars))
 
 @dataclass
 class VariableMapping:
@@ -251,12 +362,17 @@ class VariableHeaderMatcher:
         return combined, method
     def semantic_similarity_ai(self, header: str, variables: List[str]) -> Tuple[str, float, str]:
         """
-        Use AI to compare header against ALL variables and return the best match
-        Returns: (best_variable, score, reason)
+        Wrapper function to ensure consistency between single-header lookups 
+        (used in AI Assist) and batch lookups (used in Auto Mapping).
+        
+        Simply calls the batch function with a list of 1 item.
         """
-        # Just call the batch method with a single header
+        # Call the batch method with a single header
+        # Returns: {header: (variable, score, reason)}
         result = self.semantic_similarity_ai_batch([header], variables)
-        return result.get(header, ("", 0.0, "No AI response"))
+        
+        # Extract result for the single header
+        return result.get(header, ("", 0.0, "No match"))
     def semantic_similarity_ai_batch(self, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
         """
         Use AI to map multiple headers to variables in a single API call
@@ -355,19 +471,19 @@ class VariableHeaderMatcher:
     
     def match_all_with_ai(self, headers: List[str], variables: List[str], use_ai: bool = True) -> Dict[str, VariableMapping]:
         """
-        Three-stage matching process:
-        1. Lexical + Fuzzy matching for initial mappings
-        2. AI review and improvement of all mappings (if enabled)
-        3. Return final mappings
+        Optimized matching process:
+        1. Quick lexical/fuzzy pre-screening for obvious matches
+        2. AI reviews ALL headers in one batch call (PRIMARY MATCHING)
+        3. Fallback to lexical/fuzzy only if AI fails or is unsure
         """
         mappings = {}
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Stage 1: Lexical + Fuzzy matching
-        status_text.text("Stage 1/3: Running lexical and fuzzy matching...")
-        progress_bar.progress(0.33)
+        # Stage 1: Quick pre-screening (optional, for stats)
+        status_text.text("Stage 1/3: Pre-screening with lexical matching...")
+        progress_bar.progress(0.2)
         
         initial_mappings = {}
         for header in headers:
@@ -375,7 +491,6 @@ class VariableHeaderMatcher:
             best_candidate = None
             best_method = "no_match"
             
-            # Try lexical and fuzzy matching
             for candidate in variables:
                 lex_score = self.lexical_similarity(header, candidate)
                 if lex_score > best_score:
@@ -395,41 +510,63 @@ class VariableHeaderMatcher:
                 'method': best_method
             }
         
-        # Stage 2: AI Review and Improvement (if enabled and available)
+        final_mappings = {}
+        
+        # Stage 2: AI Batch Processing (PRIMARY MATCHING)
         if use_ai and not MOCK_MODE and client:
-            status_text.text("Stage 2/3: AI reviewing and improving mappings...")
-            progress_bar.progress(0.66)
+            status_text.text("Stage 2/3: AI semantic matching (primary)...")
+            progress_bar.progress(0.5)
             
             try:
-                # Get AI suggestions for ALL headers in one batch
+                # Process ALL headers with AI in one batch
                 ai_results = self.semantic_similarity_ai_batch(headers, variables)
                 
-                # Compare AI results with initial mappings and use the better one
                 for header in headers:
-                    ai_variable, ai_score, ai_reason = ai_results.get(header, ("", 0.0, ""))
+                    # Default to empty result if AI fails
+                    ai_variable, ai_score, ai_reason = ai_results.get(header, ("", 0.0, "No AI response"))
                     initial = initial_mappings[header]
                     
-                    # Use AI result if:
-                    # 1. AI found a match above threshold AND
-                    # 2. AI score is higher than initial score OR initial had no match
+                    # --- REVISED PRIORITY LOGIC ---
+                    
+                    # 1. AI PRIORITY: Use AI if it found a valid match
                     if ai_variable and ai_score >= CONFIDENCE_THRESHOLDS['low']:
-                        if ai_score > initial['score'] or not initial['variable']:
-                            initial_mappings[header] = {
+                        
+                        # SAFETY CHECK: Only override AI if Lexical match is PERFECT (1.0)
+                        # This ensures that if "SSV1" matches "SSV1", we don't let AI pick "Surrenders".
+                        if initial['score'] == 1.0:
+                            final_mappings[header] = initial
+                        else:
+                            final_mappings[header] = {
                                 'variable': ai_variable,
                                 'score': ai_score,
-                                'method': f"ai_semantic"
+                                'method': "ai_semantic"
                             }
+                    
+                    # 2. FALLBACK PRIORITY: Use Lexical if AI failed or returned "NONE"
+                    elif initial['variable'] and initial['score'] >= CONFIDENCE_THRESHOLDS['high']:
+                        final_mappings[header] = initial
+                    
+                    # 3. NO MATCH: AI found nothing and Lexical wasn't strong enough
+                    else:
+                        final_mappings[header] = {
+                            'variable': "",
+                            'score': 0.0,
+                            'method': "no_match"
+                        }
+                        
             except Exception as e:
-                st.warning(f"AI review encountered an error: {e}. Using lexical/fuzzy results.")
+                st.warning(f"⚠️ AI matching failed: {e}. Falling back to lexical/fuzzy matching.")
+                final_mappings = initial_mappings
         else:
-            status_text.text("Stage 2/3: Skipping AI review (not enabled)...")
-            progress_bar.progress(0.66)
+            status_text.text("Stage 2/3: AI not available, using lexical/fuzzy only...")
+            progress_bar.progress(0.5)
+            final_mappings = initial_mappings
         
-        # Stage 3: Create final mapping objects
+        # Stage 3: Create mapping objects
         status_text.text("Stage 3/3: Finalizing mappings...")
-        progress_bar.progress(1.0)
+        progress_bar.progress(0.9)
         
-        for header, mapping_data in initial_mappings.items():
+        for header, mapping_data in final_mappings.items():
             mappings[header] = VariableMapping(
                 variable_name=header,
                 mapped_header=mapping_data['variable'],
@@ -438,11 +575,11 @@ class VariableHeaderMatcher:
                 is_verified=mapping_data['score'] >= CONFIDENCE_THRESHOLDS['high']
             )
         
+        progress_bar.progress(1.0)
         progress_bar.empty()
         status_text.empty()
         
         return mappings
-        
     def find_best_match(self, target: str, candidates: List[str], use_ai: bool = False) -> Optional[VariableMapping]:
         """
         Generic finder.
@@ -491,130 +628,10 @@ class VariableHeaderMatcher:
             )
         
         return None
-    def match_all(self, targets: List[str], candidates: List[str], use_ai: bool = False) -> Dict[str, VariableMapping]:
-        """
-        Maps all targets to best candidates.
-        Structure of returned dict: {target: MappingObject}
-        """
-        mappings = {}
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        total_targets = len(targets)
-        
-        for idx, target in enumerate(targets):
-            progress = (idx + 1) / total_targets
-            progress_bar.progress(progress)
-            status_text.text(f"Mapping {target}...")
-            
-            mapping = self.find_best_match(target, candidates, use_ai=use_ai)
-            if mapping:
-                mappings[target] = mapping
-            else:
-                # If no good match found, create an empty mapping
-                mappings[target] = VariableMapping(
-                    variable_name=target,
-                    mapped_header="",
-                    confidence_score=0.0,
-                    matching_method="no_match",
-                    is_verified=False
-                )
-        
-        progress_bar.empty()
-        status_text.empty()
-        
-        return mappings
+    
 
 
-def extract_variables_from_formulas(formulas: List[Dict]) -> Tuple[Set[str], Dict[str, str]]:
-    """Extract all unique variables from formula expressions AND calculation steps
-    Returns: (all_variables, derived_variables_mapping)
-    """
-    variables = set()
-    derived_vars = {}  # Maps derived var to its formula
-    
-    # Pattern to match variable names
-    var_pattern = r'\b([a-zA-Z][a-zA-Z0-9_]*)\b'
-    
-    for formula in formulas:
-        # Extract from main formula expression
-        expr = formula.get('formula_expression', '')
-        matches = re.findall(var_pattern, expr)
-        variables.update(matches)
-        
-        # Extract from calculation steps (intermediate variables created by AI)
-        calc_steps = formula.get('calculation_steps', [])
-        if isinstance(calc_steps, list):
-            for step in calc_steps:
-                if isinstance(step, dict):
-                    step_text = step.get('step', '') + ' ' + step.get('formula', '')
-                    step_formula = step.get('formula', '')
-                    step_matches = re.findall(var_pattern, step_text)
-                    variables.update(step_matches)
-                    
-                    # Try to identify derived variable definitions (e.g., "variable_name = expression")
-                    derived_match = re.match(r'([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+)', step_formula)
-                    if derived_match:
-                        var_name = derived_match.group(1)
-                        var_formula = derived_match.group(2)
-                        derived_vars[var_name] = var_formula
-                        
-                elif isinstance(step, str):
-                    step_matches = re.findall(var_pattern, step)
-                    variables.update(step_matches)
-                    
-                    # Try to identify derived variable definitions
-                    derived_match = re.match(r'([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+)', step)
-                    if derived_match:
-                        var_name = derived_match.group(1)
-                        var_formula = derived_match.group(2)
-                        derived_vars[var_name] = var_formula
-    
-    # Expanded filter list
-    operators = {
-        'MAX', 'MIN', 'SUM', 'AVG', 'AVERAGE', 'IF', 'THEN', 'ELSE', 'AND', 'OR', 'NOT',
-        'ROUND', 'CEILING', 'FLOOR', 'ABS', 'POWER', 'SQRT', 'MOD', 'INT',
-        'COUNT', 'VLOOKUP', 'INDEX', 'MATCH', 'ISERROR', 'ISBLANK',
-        'TRUE', 'FALSE', 'NA', 'PI', 'EXP', 'LN', 'LOG', 'LOG10',
-        'SIN', 'COS', 'TAN', 'ASIN', 'ACOS', 'ATAN',
-        'CONCATENATE', 'LEFT', 'RIGHT', 'MID', 'LEN', 'TRIM',
-        'UPPER', 'LOWER', 'PROPER', 'SUBSTITUTE', 'REPLACE',
-        'TODAY', 'NOW', 'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND',
-        'DATE', 'TIME', 'DATEVALUE', 'TIMEVALUE',
-        'COUNTIF', 'SUMIF', 'AVERAGEIF', 'MAXIFS', 'MINIFS',
-        'LOOKUP', 'HLOOKUP', 'CHOOSE', 'OFFSET',
-        'for', 'while', 'do', 'break', 'continue', 'return',
-        'def', 'class', 'import', 'from', 'as', 'with',
-        'try', 'except', 'finally', 'raise', 'assert',
-        'in', 'is', 'None', 'True', 'False',
-        'div', 'mod', 'abs', 'max', 'min', 'sum', 'avg',
-        'Step', 'Calculate', 'Formula', 'Result', 'Value'
-    }
-    
-    operators_normalized = {op.upper() for op in operators} | {op.lower() for op in operators}
-    
-    # Filter out operators and purely numeric strings
-    variables = {v for v in variables if v not in operators_normalized and not v.isdigit()}
-    
-    return variables, derived_vars
 
-def load_excel_file(file_bytes, file_extension: str) -> Tuple[pd.DataFrame, List[str]]:
-    """Load Excel file and extract headers"""
-    try:
-        if file_extension == '.csv':
-            df = pd.read_csv(pd.io.common.BytesIO(file_bytes))
-        else:
-            df = pd.read_excel(pd.io.common.BytesIO(file_bytes))
-        
-        # Get headers (column names)
-        headers = df.columns.tolist()
-        
-        return df, headers
-    
-    except Exception as e:
-        st.error(f"Error loading Excel file: {e}")
-        return None, []
 
 def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict[str, str]) -> List[Dict]:
     """
@@ -646,48 +663,6 @@ def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict
     return mapped_formulas
 
 
-
-
-def get_all_master_variables():
-    """Aggregates variables from Input, Formula, Derived, and AI-generated sources"""
-    all_vars = set()
-    
-    # 1. Static Input Variables
-    all_vars.update(INPUT_VARIABLES.keys())
-    
-    # 2. Extracted from Formulas (including AI-generated intermediate variables)
-    if 'formulas' in st.session_state and st.session_state.formulas:
-        formula_vars, derived_defs = extract_variables_from_formulas(st.session_state.formulas)
-        all_vars.update(formula_vars)
-        all_vars.update(derived_defs.keys())
-    
-    # 3. Custom Formulas
-    if 'custom_formulas' in st.session_state and st.session_state.custom_formulas:
-        for cf in st.session_state.custom_formulas:
-            cf_vars, cf_derived = extract_variables_from_formulas([cf])
-            all_vars.update(cf_vars)
-            all_vars.update(cf_derived.keys())
-    
-    # 4. AI-generated variables from calculation_steps
-    # These are intermediate variables created by AI during formula extraction
-    if 'formulas' in st.session_state and st.session_state.formulas:
-        for formula in st.session_state.formulas:
-            calc_steps = formula.get('calculation_steps', [])
-            if isinstance(calc_steps, list):
-                for step in calc_steps:
-                    # Extract variable names from step descriptions
-                    if isinstance(step, dict):
-                        step_formula = step.get('formula', '')
-                        # Look for patterns like "var_name = ..."
-                        var_match = re.match(r'([a-zA-Z][a-zA-Z0-9_]*)\s*=', step_formula)
-                        if var_match:
-                            all_vars.add(var_match.group(1))
-                    elif isinstance(step, str):
-                        var_match = re.match(r'([a-zA-Z][a-zA-Z0-9_]*)\s*=', step)
-                        if var_match:
-                            all_vars.add(var_match.group(1))
-            
-    return sorted(list(all_vars))
 
 
 def load_css(file_name="style.css"):
