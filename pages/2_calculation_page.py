@@ -602,159 +602,6 @@ def show_calculation_engine():
                     st.success("✅ Calculations complete!")
                     st.rerun()
 
-def set_custom_css():
-    """Apply custom CSS"""
-    st.markdown(
-        """
-        <style>
-       @import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@700&display=swap');
-       @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&display=swap');
-
-        html, body, .main {
-            font-family: 'Roboto', sans-serif;
-            background: linear-gradient(135deg, #a6d3ff 50%, #cbdff7 100%);
-            color: #2c3e50;
-            animation: fadeIn 1s ease-in-out;
-            overflow-x: hidden;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        .stButton > button {
-            background: linear-gradient(135deg, #a6d3ff 50%, #cbdff7 100%);
-            color: white !important;
-            padding: 12px 25px;
-            border-radius: 10px;
-            border: none;
-            cursor: pointer;
-            font-size: 17px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(0, 77, 168, 0.3);
-            letter-spacing: 0.5px;
-        }
-        .stButton > button:hover {
-            background: linear-gradient(135deg,  #004DA8 25%, #1e88e5 50%);
-            transform: translateY(-3px) scale(1.02);
-            box-shadow: 0 6px 18px rgba(0, 77, 168, 0.4);
-            color: white !important;
-        }
-
-        /* Make the "Start Automatic Mapping" button much more obvious */
-        div.stButton > button[key="start_mapping_btn"] {
-            background: linear-gradient(90deg, #004DA8 0%, #0069d9 100%) !important;
-            width: 100% !important;
-            height: 50px !important;
-            font-size: 20px !important;
-            font-weight: 800 !important;
-            box-shadow: 0 4px 15px rgba(0, 77, 168, 0.6);
-            text-align: center;
-            border: 2px solid #003366;
-        }
-
-        .streamlit-expander > div[role="button"] {
-            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%) !important;
-            border-left: 6px solid #004DA8 !important;
-            padding: 12px 15px;
-            border-radius: 10px;
-            margin-bottom: 8px;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 5px rgba(0, 77, 168, 0.1);
-            font-weight: 500;
-            color: #1a1a1a !important;
-            font-family: 'Montserrat', sans-serif;
-            font-size: 1.05em;
-        }
-
-        h1, h2, h3, h4, h5, h6 {
-            font-family: 'Montserrat', sans-serif !important;
-            color: #004DA8 !important;
-            font-weight: 700;
-        }
-
-        .stDataFrame table {
-            font-family: 'Roboto', sans-serif;
-            border-collapse: collapse;
-            box-shadow: 0 5px 15px rgba(0, 77, 168, 0.1);
-            border-radius: 12px;
-            overflow: hidden;
-            background-color: white;
-        }
-        
-        .stDataFrame thead th {
-            background: linear-gradient(135deg, #004DA8 0%, #1976d2 100%);
-            color: white !important;
-            padding: 15px 20px;
-            font-weight: 700;
-        }
-
-        .stMultiSelect label {
-            font-weight: 600;
-            color: #f5f7fa !important;
-        }
-        .stMultiSelect > div > div {
-            border-radius: 8px;
-            border: 1px solid #e0e0e0;
-            background: linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
-        }
-        .stMultiSelect > div > div:focus-within {
-            border-color: #e0e0e0;
-            box-shadow: 0 0 0 0.2rem rgba(0, 77, 168, 0.25);
-            background: white;
-        }
-        .stMultiSelect [data-baseweb="tag"] {
-            background: linear-gradient(135deg, #6d96c7 0%, #a6d3ff 50%, #cbdff7 100%);
-            color: white !important;
-            border-radius: 5px;
-            padding: 4px 10px;
-            font-size: 0.9em;
-            font-weight: 500;
-        }
-        .stMultiSelect [data-baseweb="tag"] svg {
-            color: white !important;
-        }
-        .stMultiSelect input {
-            color: #2f3b4a !important;
-        }
-
-        .confidence-high {
-            background-color: #d4edda !important;
-            color: #155724 !important;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-weight: 600;
-        }
-
-        .confidence-medium {
-            background-color: #fff3cd !important;
-            color: #856404 !important;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-weight: 600;
-        }
-
-        .confidence-low {
-            background-color: #f8d7da !important;
-            color: #721c24 !important;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-weight: 600;
-        }
-
-        .header-unmapped {
-            background-color: #e8f4f8 !important;
-            color: #0277bd !important;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-style: italic;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
 
 def get_all_master_variables():
     """Aggregates variables from Input, Formula, and Derived sources"""
@@ -779,6 +626,8 @@ def get_all_master_variables():
     return sorted(list(all_vars))
 
 def main():
+    load_css()
+    
     st.set_page_config(
         page_title="Variable Mapping",
         page_icon="📊",
@@ -786,7 +635,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    set_custom_css()
+    
     
     # Custom header
     st.markdown(
