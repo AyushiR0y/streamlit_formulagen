@@ -373,16 +373,13 @@ class VariableHeaderMatcher:
         
         # Extract result for the single header
         return result.get(header, ("", 0.0, "No match"))
-    def semantic_similarity_ai_batch(self, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
+        def semantic_similarity_ai_batch(self, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
         """
         Use AI to map multiple headers to variables in a single API call.
         
-        NEW STRATEGY: 
-        Instead of pre-filtering candidates in Python, we define a 'Scoring System' 
-        inside the prompt. This allows the AI to apply 'logic' dynamically 
-        to handle specific cases (like SSV1_AMT vs SSV) using reasoning.
-        
-        Returns: {header: (best_variable, score, reason)}
+        STRATEGY CHANGE:
+        Instead of asking AI to calculate complex scores, we ask it to RANK matches
+        based on simple, clear criteria. This is less error-prone.
         """
         if MOCK_MODE or not client:
             return {h: ("", 0.0, "AI unavailable") for h in headers}
@@ -392,100 +389,98 @@ class VariableHeaderMatcher:
             header_list = "\n".join([f"  {i+1}. {h}" for i, h in enumerate(headers)])
             var_list = "\n".join([f"  - {var}" for var in variables])
             
-            prompt = f"""You are an expert in insurance and financial data mapping with strict attention to naming conventions.
+            prompt = f"""You are an expert in insurance data mapping. You need to map Excel Headers to Variable Names.
 
-                Excel Headers to Map:
+                EXCEL HEADERS:
                 {header_list}
 
-                Available Variables:
+                AVAILABLE VARIABLES:
                 {var_list}
 
-                SCORING ALGORITHM (Strict Instructions):
-                You MUST calculate a 'Match Score' (0.0 to 1.0) for each variable against each header using these rules:
-                
-                1. SUBSTRING PRESENCE (High Priority):
-                   If the Variable Name is a substring of the Header (e.g., 'SSV1' is inside 'SSV1_AMT'), 
-                   this indicates a very strong direct match. Base Score: 0.9.
-                
-                2. SUFFIX IMPLICATIONS (Contextual):
-                   If the Header ends in '_AMT', '_FACTOR', '_1', '_2', or '_3':
-                   - It implies a relation to a specific variable (e.g., 'SSV1' is related to 'SSV1_AMT').
-                   - Check if the Variable Name shares this base (e.g., 'SSV1' vs 'SSV1_AMT').
-                   - If yes, add +0.3 to the score.
-                
-                3. NEGATIVE CONSTRAINTS (Critical - Must be followed):
-                   - If Header is 'Surrender Paid Amount': You MUST NOT choose 'Paid'. (Score 0.0).
-                   - If Header is 'Gross Premium': You MUST NOT choose 'PREMIUM' (unless 'Gross' is in var name). 
-                   - If Header contains 'Surrender' and Variable is 'Paid': Score 0.0.
+                INSTRUCTIONS:
+                For EACH header above, identify the SINGLE best variable from the variable list. Output the result in the following format:
 
-                4. EXACT MATCH BONUS:
-                   If Variable Name == Header (case-insensitive): Score 1.0.
+                HEADER: [Exact Header Name]
+                VARIABLE: [Best Variable Name or NONE]
+                SCORE: [A number between 0.0 and 1.0 representing your confidence]
+                REASON: [Brief explanation]
 
-                5. SEMANTIC RELEVANCE:
-                   If Variable and Header have the same meaning but different wording (e.g., 'Policy_Term' vs 'Term'), add +0.2.
+                MATCHING RANKING (Follow this order of importance):
+                1. EXACT MATCH: If a variable name matches the header EXACTLY (case-insensitive), choose it. (Score: 1.0)
+                2. SUFFIX MATCH: If the header ends with a specific code (e.g., "_AMT", "_FACTOR"), look for a variable with the SAME ending (e.g., "SSV1_AMT" ends in "_AMT", so "SSV1" is a better match than "SSV"). (Score: 0.9)
+                3. SEMANTIC MATCH: If neither exact nor suffix match, choose the variable with the closest semantic meaning in insurance/finance. (Score: 0.7 - 0.8)
 
-                TASK:
-                For EACH header provided in the list:
-                1. Identify the Variable with the HIGHEST calculated score based on the rules above.
-                2. Set the 'Match Score' (between 0.0 and 1.0) based on that.
-                3. If NO variable has a score > 0.8, return VARIABLE: NONE.
+                NEGATIVE CONSTRAINTS (Must be followed):
+                - If header is "Surrender Paid Amount", DO NOT choose "Paid", "Amount", or any generic variable. Look for "Surrender_Paid_Amount".
+                - If header ends in "_AMT", "_FACTOR", "_1", "_2", or "_3", prioritize variables that share that specific ending. Do not choose the base variable (e.g., prefer "SSV1" over "SSV" for "SSV1_AMT").
 
-                Respond for EACH header in this EXACT format:
-                HEADER: <exact header name from list>
-                VARIABLE: <exact variable name from list, or NONE>
-                SCORE: <calculated score 0.0 to 1.0>
-                REASON: <Explain why this score was given based on the rules (e.g., "Substring match", "Exact match", "Negative constraint applied")>
+                IF NO GOOD MATCH EXISTS (score < 0.7), output "NONE" for the variable.
 
-                ---
-                Repeat format for each header.
+                Repeat the format for each header.
                 """
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=800 + (len(headers) * 50), # Adjust tokens
+                max_tokens=1000, # Increased slightly for structured output
                 temperature=0.1
             )
             
             response_text = response.choices[0].message.content.strip()
             
-            # Parse response for each header
+            # Parse response
             results = {}
             
-            # Split by headers (AI usually repeats them)
-            sections = re.split(r'\n---\n|\n\n\d+\.', response_text)
+            # Robust split to handle variations in spacing/formatting
+            # Split by 'HEADER:' pattern which we enforced in prompt
+            sections = re.split(r'HEADER:\s*', response_text)
             
             for section in sections:
                 if not section.strip():
                     continue
                 
-                # Parse HEADER, VARIABLE, SCORE, REASON
-                header_match = re.search(r'HEADER:\s*(.+?)(?:\n|$)', section, re.IGNORECASE)
-                var_match = re.search(r'VARIABLE:\s*(.+?)(?:\n|$)', section, re.IGNORECASE)
-                score_match = re.search(r'SCORE:\s*([0-9]*\.?[0-9]+)', section, re.IGNORECASE)
-                reason_match = re.search(r'REASON:\s*(.+?)(?:\n\d+\.|$)', section, re.IGNORECASE | re.DOTALL)
+                # Extract VARIABLE
+                var_match = re.search(r'VARIABLE:\s*(.+?)(?:\n|SCORE:|$)', section, re.IGNORECASE)
+                var_name = var_match.group(1).strip() if var_match else "NONE"
                 
-                if header_match:
-                    header = header_match.group(1).strip()
-                    matched_var = var_match.group(1).strip() if var_match else "NONE"
-                    score = float(score_match.group(1)) if score_match else 0.0
-                    reason = reason_match.group(1).strip() if reason_match else "No explanation"
-                    
-                    # Validate header is in our list (AI might hallucinate)
-                    if header in headers:
-                        # If AI said NONE or score is low, treat as no match
-                        if matched_var == "NONE" or score < CONFIDENCE_THRESHOLDS['low']:
-                            results[header] = ("", 0.0, reason)
-                        elif matched_var not in variables:
-                            # AI hallucinated a variable not in list
-                            results[header] = ("", 0.0, "Variable not in allowed list")
-                        else:
-                            results[header] = (matched_var, min(score, 1.0), reason)
+                # Extract SCORE
+                score_match = re.search(r'SCORE:\s*([0-9]*\.?[0-9]+)', section, re.IGNORECASE)
+                score = float(score_match.group(1)) if score_match else 0.0
+                
+                # Extract REASON
+                # Assume rest of string is reason, or look for REASON tag
+                reason_part = section[len(var_match.group(0))+len(score_match.group(0)):].strip()
+                
+                # Clean up extra markers if AI added them (e.g. "SCORE: 0.9 REASON: ...")
+                # We split by newlines to get the first line or clean keywords
+                reason_lines = reason_part.splitlines()
+                # Filter out lines that look like tags
+                cleaned_reason = reason_lines[0] if reason_lines else ""
+                
+                # Find the Header this section belongs to
+                # We reconstruct header by looking at the text preceding "HEADER:"
+                # This is tricky in split, but we can rely on order
+                # Or simpler: Prompt forced "HEADER: [Name]" so var_match group(1) is not it.
+                # Actually, the section contains the header name in the text "1. Header Name"
+                # Let's extract the header name from the section start if possible, or just trust the order.
+                # Since `results` maps `header -> var`, we need the key (header name).
+                # This part relies on AI repeating the header name.
+                # Let's look for the header name in the text.
+                header_search = re.search(r'\d+\.\s+([^\n]+)', section)
+                if header_search:
+                    header_name = header_search.group(1).strip()
+                else:
+                    # Fallback if regex fails (shouldn't happen with strict prompt)
+                    header_name = "Unknown"
+
+                # Store result
+                results[header_name] = (var_name, min(score, 1.0), cleaned_reason)
             
-            # Fill in missing headers
+            # Fill in any missing headers with empty results
+            # (AI might have skipped some if it failed to output them)
             for header in headers:
                 if header not in results:
-                    results[header] = ("", 0.0, "No AI response")
+                    results[header] = ("", 0.0, "No AI response found")
             
             return results
             
