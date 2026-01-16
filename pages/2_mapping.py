@@ -433,12 +433,6 @@ class VariableHeaderMatcher:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Enable debug mode temporarily for troubleshooting
-        debug_enabled = os.getenv('DEBUG_MODE') == 'True'
-        
-        if debug_enabled:
-            st.info(f"🔍 Debug Mode: Matching {len(headers)} headers against {len(variables)} variables")
-        
         if use_ai and not MOCK_MODE and client:
             status_text.text("AI semantic matching in progress...")
             progress_bar.progress(0.3)
@@ -447,17 +441,9 @@ class VariableHeaderMatcher:
             ai_results = self.semantic_similarity_ai_batch(headers, variables)
             progress_bar.progress(0.6)
             
-            # Show AI results summary
-            if debug_enabled:
-                mapped_count = sum(1 for v, s, r in ai_results.values() if v)
-                st.info(f"AI mapped {mapped_count}/{len(headers)} headers")
-            
             # Process AI results with fallback
             for idx, header in enumerate(headers):
                 ai_variable, ai_score, ai_reason = ai_results.get(header, ("", 0.0, "No AI response"))
-                
-                if debug_enabled:
-                    st.write(f"**{header}** → `{ai_variable}` (score: {ai_score:.2f}) - {ai_reason[:50]}")
                 
                 # Lower threshold for AI since it's more intelligent
                 if ai_variable and ai_score >= 0.6:
@@ -497,13 +483,11 @@ class VariableHeaderMatcher:
                             matching_method=f"{best_method} (AI fallback)",
                             is_verified=best_score >= 0.8
                         )
-                        if debug_enabled:
-                            st.write(f"  → Fallback: `{best_candidate}` ({best_method}, score: {best_score:.2f})")
                     else:
-                        # No match found
+                        # IMPORTANT: Still create a VariableMapping object with empty mapped_header
                         mappings[header] = VariableMapping(
                             variable_name=header,
-                            mapped_header="",
+                            mapped_header="",  # Empty but present
                             confidence_score=0.0,
                             matching_method=f"no_match (AI: {ai_reason[:30]})",
                             is_verified=False
@@ -516,16 +500,53 @@ class VariableHeaderMatcher:
             time.sleep(0.5)
             
         else:
-            # Existing non-AI code...
+            # No AI - use lexical/fuzzy only
             status_text.text("Using lexical/fuzzy matching...")
-            # ... rest of your code
+            progress_bar.progress(0.5)
+            
+            for i, header in enumerate(headers):
+                best_score = 0.0
+                best_candidate = None
+                best_method = "no_match"
+                
+                for candidate in variables:
+                    combined, method = self.calculate_combined_score(candidate, header)
+                    if combined > best_score:
+                        best_score = combined
+                        best_candidate = candidate
+                        best_method = method
+                
+                if best_candidate and best_score >= 0.5:
+                    mappings[header] = VariableMapping(
+                        variable_name=header,
+                        mapped_header=best_candidate,
+                        confidence_score=best_score,
+                        matching_method=best_method,
+                        is_verified=best_score >= 0.8
+                    )
+                else:
+                    # IMPORTANT: Still create mapping with empty value
+                    mappings[header] = VariableMapping(
+                        variable_name=header,
+                        mapped_header="",
+                        confidence_score=0.0,
+                        matching_method="no_match",
+                        is_verified=False
+                    )
+                
+                progress_bar.progress((i + 1) / len(headers))
+            
+            status_text.text("Matching complete!")
         
         progress_bar.empty()
         status_text.empty()
         
+        # Debug output
+        st.write(f"🔍 Created {len(mappings)} mapping objects")
+        non_empty = len([m for m in mappings.values() if m.mapped_header])
+        st.write(f"✅ {non_empty} have actual mappings")
+        
         return mappings
-
-
 
     def _parse_ai_response(self, response_text: str, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
         """
@@ -691,14 +712,24 @@ def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict
     # Create reverse mapping: variable -> header
     var_to_header = {var: header for header, var in header_to_var_mapping.items() if var}
     
+    # Debug
+    st.write(f"🔍 Applying {len(var_to_header)} mappings to formulas")
+    
     for formula in formulas:
         expr = formula.get('formula_expression', '')
+        original_expr = expr
         
         # Replace each variable with its corresponding header
         for var_name, excel_header in var_to_header.items():
             # Use word boundaries to avoid partial replacements
             pattern = r'\b' + re.escape(var_name) + r'\b'
             expr = re.sub(pattern, f'[{excel_header}]', expr)
+        
+        # Debug if changed
+        if expr != original_expr:
+            st.write(f"✅ Mapped: {formula.get('formula_name')}")
+            st.write(f"   Before: {original_expr[:100]}")
+            st.write(f"   After: {expr[:100]}")
         
         mapped_formulas.append({
             'formula_name': formula.get('formula_name', ''),
@@ -707,7 +738,6 @@ def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict
         })
     
     return mapped_formulas
-
 
 
 def load_css(file_name="style.css"):
@@ -912,13 +942,22 @@ def main():
                                 use_ai=use_ai_mapping
                             )
                             
-                            # 3. Update session state
+                            # 3. Update session state - THIS IS THE FIX
                             new_mapping = {}
                             for header, mapping_obj in mappings.items():
-                                new_mapping[header] = mapping_obj.mapped_header
+                                # Only store non-empty mappings
+                                if mapping_obj.mapped_header:
+                                    new_mapping[header] = mapping_obj.mapped_header
+                                else:
+                                    # Store empty string for unmapped headers
+                                    new_mapping[header] = ""
                             
                             st.session_state.header_to_var_mapping = new_mapping
                             st.session_state.initial_mapping_done = True
+                            
+                            # Debug output
+                            st.write("🔍 **Debug: Mappings Created:**")
+                            st.json(new_mapping)
                             
                             # Show matching statistics
                             total = len(mappings)
@@ -941,8 +980,9 @@ def main():
                                 ])
                                 st.dataframe(method_df, hide_index=True, use_container_width=True)
                             
-                            st.rerun()
-                    # --------------------------------------
+                            # DON'T rerun here - let user see the debug output
+                            # st.rerun()
+
     
     with col2:
         st.subheader("📋 Available Variables")
@@ -1011,6 +1051,12 @@ def main():
         st.subheader("🔗 Header to Variable Mappings")
         st.markdown("Review and edit the mappings. Rows represent **Excel Headers**. Map them to the **Variables** used in formulas.")
         
+        # Debug: Show current mapping state
+        with st.expander("🔍 Debug: Current Mapping State", expanded=False):
+            st.json(st.session_state.header_to_var_mapping)
+            st.write(f"Total mappings: {len(st.session_state.header_to_var_mapping)}")
+            st.write(f"Non-empty mappings: {len([v for v in st.session_state.header_to_var_mapping.values() if v])}")
+        
         # Create tabs for different views
         tab1, tab2 = st.tabs(["📊 Mappings Table", "📋 JSON View"])
         
@@ -1034,70 +1080,77 @@ def main():
             # Filter out removed headers
             active_headers = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
             
-            for header in active_headers:
-                # Get current mapping for this header
-                current_var = st.session_state.header_to_var_mapping.get(header, "")
+            # Create a form to batch updates
+            with st.form(key="mapping_form"):
+                updated_mappings = {}
                 
-                col1, col2, col3 = st.columns([3, 3, 1])
-
-                with col1:
-                    st.text_input("Header", value=header, key=f"h_txt_{header}", label_visibility="collapsed", disabled=True)
-                
-                # In your mapping table section, find where you create the selectbox and replace it with this:
-
-                with col2:
-                    # Dropdown options: (None) + all variables
-                    dropdown_options = ["(None of the following)"] + current_variables
-                    
-                    # Get the current mapped variable from session state
+                for header in active_headers:
+                    # Get current mapping for this header
                     current_var = st.session_state.header_to_var_mapping.get(header, "")
                     
-                    # Determine index - IMPORTANT: This must recalculate every time
-                    if current_var and current_var in dropdown_options:
-                        idx = dropdown_options.index(current_var)
-                    else:
-                        idx = 0  # Default to "(None of the following)"
+                    col1, col2, col3 = st.columns([3, 3, 1])
+
+                    with col1:
+                        st.text_input("Header", value=header, key=f"h_txt_{header}", label_visibility="collapsed", disabled=True)
                     
-                    # Use a unique key that includes the current value to force refresh
-                    # This is the KEY FIX - adding current_var to the key forces widget recreation
-                    widget_key = f"var_select_{header}_{current_var}"
+                    with col2:
+                        # Dropdown options: (None) + all variables
+                        dropdown_options = ["(None of the following)"] + current_variables
+                        
+                        # Determine index based on current mapping
+                        if current_var and current_var in dropdown_options:
+                            idx = dropdown_options.index(current_var)
+                        else:
+                            idx = 0  # Default to "(None of the following)"
+                        
+                        # Selectbox with unique key
+                        new_var = st.selectbox(
+                            "Variable",
+                            options=dropdown_options,
+                            index=idx,
+                            key=f"var_select_{header}",
+                            label_visibility="collapsed"
+                        )
+                        
+                        # Store in temporary dict (will be applied on form submit)
+                        final_var = "" if new_var == "(None of the following)" else new_var
+                        updated_mappings[header] = final_var
                     
-                    new_var = st.selectbox(
-                        "Variable",
-                        options=dropdown_options,
-                        index=idx,
-                        key=widget_key,
-                        label_visibility="collapsed"
-                    )
-                    
-                    # Update mapping if changed
-                    final_var = "" if new_var == "(None of the following)" else new_var
-                    
-                    # Only update if different from what's in session state
-                    if final_var != current_var:
-                        st.session_state.header_to_var_mapping[header] = final_var
-                
-                with col3:
-                    # Remove Button
-                    if st.button("🗑️", key=f"remove_{header}", help="Remove this column from calculations"):
-                        st.session_state.removed_headers.append(header)
-                        # Also remove from mapping to clean up
-                        if header in st.session_state.header_to_var_mapping:
-                            del st.session_state.header_to_var_mapping[header]
-                        st.rerun()
+                    with col3:
+                        # Remove checkbox instead of button (since we're in a form)
+                        remove = st.checkbox("🗑️", key=f"remove_{header}", help="Remove this column")
+                        if remove:
+                            if header not in st.session_state.removed_headers:
+                                st.session_state.removed_headers.append(header)
                                 
-                st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
+                    st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
+                
+                # Submit button for the form
+                submitted = st.form_submit_button("💾 Save Changes", type="primary")
+                
+                if submitted:
+                    # Apply all changes at once
+                    for header, var in updated_mappings.items():
+                        if header not in st.session_state.removed_headers:
+                            st.session_state.header_to_var_mapping[header] = var
+                    
+                    st.success("✅ Changes saved!")
+                    st.rerun()
         
         with tab2:
             st.markdown("#### Current Mappings (JSON)")
             
-            # Filter out empty mappings
+            # Filter out empty mappings and removed headers
             active_mapping = {
                 h: v for h, v in st.session_state.header_to_var_mapping.items() 
                 if v and h not in st.session_state.removed_headers
             }
             
             st.json(active_mapping)
+            
+            # Show statistics
+            st.write(f"**Active mappings:** {len(active_mapping)}")
+            st.write(f"**Removed headers:** {len(st.session_state.removed_headers)}")
             
             # Provide download for this JSON
             st.download_button(
