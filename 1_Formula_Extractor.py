@@ -577,6 +577,7 @@ class StableChunkedDocumentFormulaExtractor:
         3. Extract the formula expression from natural language.
         4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
         5. If no formula is clearly defined, respond with "FORMULA_NOT_FOUND" and give reasoning
+        6. Don't skip any of {formula_name}. If not found, say "FORMULA_NOT_FOUND".
         6. Pay close attention to formulas involving:
         - terms around GSV, SSV (and Surrender Paid Amount is usually a max of multiple components)
         - exponential terms like (1/1.05)^N
