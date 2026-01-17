@@ -558,8 +558,8 @@ def main():
             st.info("You can upload new mappings to replace the current ones.")
         
         st.markdown("### Import Variable Mappings")
-                
-                col_import1, col_import2 = st.columns(2)
+        
+        col_import1, col_import2 = st.columns(2)
                 
                 with col_import1:
                     st.markdown("#### Upload JSON Mapping")
@@ -662,23 +662,23 @@ def main():
             st.info("You can upload new formulas to replace the current ones.")
         
         st.markdown("### Import Formulas")
-                
-                col_form1, col_form2 = st.columns(2)
-                
-                with col_form1:
-                    st.markdown("#### Upload JSON Formulas")
-                    st.markdown("**Supported JSON formats:**")
-                    
-                    st.markdown("**Format 1: Direct list**")
-                    st.code("""[
+        
+        col_form1, col_form2 = st.columns(2)
+        
+        with col_form1:
+            st.markdown("#### Upload JSON Formulas")
+            st.markdown("**Supported JSON formats:**")
+            
+            st.markdown("**Format 1: Direct list**")
+            st.code("""[
   {
     "formula_name": "TOTAL_PREMIUM_PAID",
     "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
   }
 ]""", language="json")
-                    
-                    st.markdown("**Format 2: Extraction output**")
-                    st.code("""{
+            
+            st.markdown("**Format 2: Extraction output**")
+            st.code("""{
   "formulas": [
     {
       "formula_name": "TOTAL_PREMIUM_PAID",
@@ -686,60 +686,60 @@ def main():
     }
   ]
 }""", language="json")
+            
+            uploaded_formula_json = st.file_uploader(
+                "Upload JSON formulas file",
+                type=['json'],
+                key="formula_json_uploader",
+                help="Accepts both direct formula lists and extraction output format"
+            )
+            
+            if uploaded_formula_json:
+                try:
+                    imported_formulas = import_formulas_from_json(uploaded_formula_json)
+                    st.success(f"✅ Successfully imported {len(imported_formulas)} formulas from JSON")
                     
-                    uploaded_formula_json = st.file_uploader(
-                        "Upload JSON formulas file",
-                        type=['json'],
-                        key="formula_json_uploader",
-                        help="Accepts both direct formula lists and extraction output format"
-                    )
+                    with st.expander("Preview imported formulas"):
+                        for i, formula in enumerate(imported_formulas, 1):
+                            st.markdown(f"**{i}. {formula.get('formula_name', 'Unknown')}**")
+                            st.code(formula.get('formula_expression', ''))
                     
-                    if uploaded_formula_json:
-                        try:
-                            imported_formulas = import_formulas_from_json(uploaded_formula_json)
-                            st.success(f"✅ Successfully imported {len(imported_formulas)} formulas from JSON")
-                            
-                            with st.expander("Preview imported formulas"):
-                                for i, formula in enumerate(imported_formulas, 1):
-                                    st.markdown(f"**{i}. {formula.get('formula_name', 'Unknown')}**")
-                                    st.code(formula.get('formula_expression', ''))
-                            
-                            if st.button("✔️ Apply JSON Formulas", type="primary", key="apply_formula_json"):
-                                st.session_state.formulas = imported_formulas
-                                st.success("✅ Formulas applied to session!")
-                                st.rerun()
-                        
-                        except Exception as e:
-                            st.error(f"❌ Error importing JSON: {str(e)}")
+                    if st.button("✔️ Apply JSON Formulas", type="primary", key="apply_formula_json"):
+                        st.session_state.formulas = imported_formulas
+                        st.success("✅ Formulas applied to session!")
+                        st.rerun()
                 
-                with col_form2:
-                    st.markdown("#### Upload Excel Formulas")
-                    st.markdown("Excel file should have columns: `formula_name`, `formula_expression`")
-                    st.markdown("Optional columns: `description`, `variables_used`")
+                except Exception as e:
+                    st.error(f"❌ Error importing JSON: {str(e)}")
+        
+        with col_form2:
+            st.markdown("#### Upload Excel Formulas")
+            st.markdown("Excel file should have columns: `formula_name`, `formula_expression`")
+            st.markdown("Optional columns: `description`, `variables_used`")
+            
+            uploaded_formula_excel = st.file_uploader(
+                "Upload Excel formulas file",
+                type=['xlsx', 'xls'],
+                key="formula_excel_uploader",
+                help="Upload an Excel file with formula definitions"
+            )
+            
+            if uploaded_formula_excel:
+                try:
+                    imported_formulas = import_formulas_from_excel(uploaded_formula_excel)
+                    st.success(f"✅ Successfully imported {len(imported_formulas)} formulas from Excel")
                     
-                    uploaded_formula_excel = st.file_uploader(
-                        "Upload Excel formulas file",
-                        type=['xlsx', 'xls'],
-                        key="formula_excel_uploader",
-                        help="Upload an Excel file with formula definitions"
-                    )
+                    with st.expander("Preview imported formulas"):
+                        df_preview = pd.DataFrame(imported_formulas)
+                        st.dataframe(df_preview, use_container_width=True)
                     
-                    if uploaded_formula_excel:
-                        try:
-                            imported_formulas = import_formulas_from_excel(uploaded_formula_excel)
-                            st.success(f"✅ Successfully imported {len(imported_formulas)} formulas from Excel")
-                            
-                            with st.expander("Preview imported formulas"):
-                                df_preview = pd.DataFrame(imported_formulas)
-                                st.dataframe(df_preview, use_container_width=True)
-                            
-                            if st.button("✔️ Apply Excel Formulas", type="primary", key="apply_formula_excel"):
-                                st.session_state.formulas = imported_formulas
-                                st.success("✅ Formulas applied to session!")
-                                st.rerun()
-                        
-                        except Exception as e:
-                            st.error(f"❌ Error importing Excel: {str(e)}")
+                    if st.button("✔️ Apply Excel Formulas", type="primary", key="apply_formula_excel"):
+                        st.session_state.formulas = imported_formulas
+                        st.success("✅ Formulas applied to session!")
+                        st.rerun()
+                
+                except Exception as e:
+                    st.error(f"❌ Error importing Excel: {str(e)}")
         
         st.markdown("---")
         st.subheader("📥 Import Variable Mappings")
