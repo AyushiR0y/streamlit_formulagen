@@ -167,7 +167,7 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         eval_expr = eval_expr.replace('MIN(', 'min(')
         eval_expr = eval_expr.replace('ABS(', 'abs(')
         eval_expr = eval_expr.replace('POWER(', 'pow(')
-        eval_expr = eval_expr.replace('SQRT(', 'sqrt(')
+        eval_expr = eval_expr.replace('SQRT(', 'math.sqrt(')
         
         # Safe evaluation with limited builtins
         allowed_builtins = {
@@ -181,7 +181,7 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             'sqrt': math.sqrt
         }
         
-        result = eval(eval_expr, {"__builtins__": allowed_builtins}, {})
+        result = eval(eval_expr, {"__builtins__": allowed_builtins, "math": math}, {})
         
         # Ensure result is a number
         if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
@@ -195,16 +195,24 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         return None
 
 
-def calculate_row(row: pd.Series, formula_expr: str, mappings: Dict) -> Any:
-    """Calculate formula result for a single row"""
+def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str]) -> Any:
+    """Calculate formula result for a single row
+    
+    Args:
+        row: DataFrame row
+        formula_expr: Formula expression string
+        header_to_var_mapping: Dict mapping Excel headers to variable names
+    """
     
     # Build variable values from row data
+    # We need to REVERSE the mapping: var_name -> header -> value
     var_values = {}
     
-    for var_name, mapping_obj in mappings.items():
-        header = mapping_obj.mapped_header
-        
-        if header and header in row.index:
+    # Reverse the mapping to go from variable name to header
+    var_to_header = {v: k for k, v in header_to_var_mapping.items()}
+    
+    for var_name, header in var_to_header.items():
+        if header in row.index:
             value = row[header]
             var_values[var_name] = value
     
@@ -253,42 +261,55 @@ def match_formula_to_output_column(formula_name: str, output_columns: List[str])
 
 def run_calculations(df: pd.DataFrame, 
                      formulas: List[Dict], 
-                     mappings: Dict,
+                     header_to_var_mapping: Dict[str, str],
                      output_columns: List[str]) -> tuple[pd.DataFrame, List[CalculationResult]]:
-    """Run selected formulas on dataframe"""
+    """Run selected formulas on dataframe
+    
+    Args:
+        df: Input DataFrame
+        formulas: List of formula dictionaries
+        header_to_var_mapping: Dict mapping Excel headers to variable names
+        output_columns: List of output column names to fill
+    """
     result_df = df.copy()
     calculation_results = []
     
-    # Filter formulas - only run those that match output columns
-    formulas_to_run = []
-    for formula in formulas:
-        formula_name = formula.get('formula_name', 'Unknown')
-        
-        # Check if this formula is relevant to any output column
-        matched_col = match_formula_to_output_column(formula_name, output_columns)
-        
-        if matched_col in output_columns or matched_col == formula_name:
-            formulas_to_run.append((formula, matched_col))
-    
-    if not formulas_to_run:
-        st.warning("⚠️ No formulas matched the selected output columns. Using all formulas.")
+    # If no output columns specified, try to match all formulas
+    if not output_columns:
+        st.warning("⚠️ No output columns selected. Creating new columns for all formulas.")
         formulas_to_run = [(f, f.get('formula_name', 'Unknown')) for f in formulas]
+    else:
+        # Filter formulas - only run those that match output columns
+        formulas_to_run = []
+        for formula in formulas:
+            formula_name = formula.get('formula_name', 'Unknown')
+            
+            # Check if this formula is relevant to any output column
+            matched_col = match_formula_to_output_column(formula_name, output_columns)
+            
+            if matched_col in output_columns or matched_col == formula_name:
+                formulas_to_run.append((formula, matched_col))
+        
+        if not formulas_to_run:
+            st.warning("⚠️ No formulas matched the selected output columns. Using all formulas.")
+            formulas_to_run = [(f, f.get('formula_name', 'Unknown')) for f in formulas]
     
-    st.info(f"Running {len(formulas_to_run)} formula(s) for selected output columns")
+    st.info(f"Running {len(formulas_to_run)} formula(s)")
     
     for formula, output_col in formulas_to_run:
         formula_name = formula.get('formula_name', 'Unknown')
         formula_expr = formula.get('formula_expression', '')
         
-        st.info(f"🔧 Processing formula: **{formula_name}**")
+        st.info(f"🔧 Processing formula: **{formula_name}** → **{output_col}**")
         st.code(f"Expression: {formula_expr}")
         
         errors = []
         success_count = 0
         
-        # Ensure column exists in dataframe
+        # Ensure column exists in dataframe - create if needed
         if output_col not in result_df.columns:
             result_df[output_col] = np.nan
+            st.info(f"Created new column: {output_col}")
         
         # Create a progress bar
         progress_text = f"Processing: {formula_name} → {output_col}"
@@ -301,39 +322,42 @@ def run_calculations(df: pd.DataFrame,
         # Debug: show first row calculation
         if total_rows > 0:
             first_row = result_df.iloc[0]
+            
+            # Build debug info
+            var_to_header = {v: k for k, v in header_to_var_mapping.items()}
             var_values_debug = {}
-            for var_name, mapping_obj in mappings.items():
-                header = mapping_obj.mapped_header
-                if header and header in first_row.index:
+            for var_name, header in var_to_header.items():
+                if header in first_row.index:
                     var_values_debug[var_name] = first_row[header]
             
             st.write(f"📊 **Sample calculation (Row 0):**")
-            st.write(f"Variables: {var_values_debug}")
-            first_result = calculate_row(first_row, formula_expr, mappings)
-            st.write(f"Result: {first_result}")
+            st.write(f"Variables available: {list(var_values_debug.keys())}")
+            st.write(f"Sample values: {dict(list(var_values_debug.items())[:5])}")
+            
+            first_result = calculate_row(first_row, formula_expr, header_to_var_mapping)
+            st.write(f"**Calculated Result:** {first_result}")
         
         # Calculate for each row
-        for idx, row in result_df.iterrows():
+        for idx in range(len(result_df)):
             try:
-                result = calculate_row(row, formula_expr, mappings)
+                row = result_df.iloc[idx]
+                result = calculate_row(row, formula_expr, header_to_var_mapping)
                 
                 # Check if result is valid
                 if result is None:
                     errors.append(f"Row {idx}: Calculation returned None")
-                    result_df.at[idx, output_col] = np.nan
-                elif isinstance(result, str) and result.startswith("ERROR"):
-                    errors.append(f"Row {idx}: {result}")
-                    result_df.at[idx, output_col] = np.nan
+                    result_df.at[result_df.index[idx], output_col] = np.nan
                 else:
-                    result_df.at[idx, output_col] = result
+                    # CRITICAL FIX: Use .at with the actual index, not integer position
+                    result_df.at[result_df.index[idx], output_col] = result
                     success_count += 1
             
             except Exception as e:
                 error_msg = f"Row {idx}: {str(e)}"
                 errors.append(error_msg)
-                result_df.at[idx, output_col] = np.nan
+                result_df.at[result_df.index[idx], output_col] = np.nan
             
-            # Update Progress every 10 rows
+            # Update Progress every 10 rows or at the end
             if idx % 10 == 0 or idx == total_rows - 1:
                 progress = min((idx + 1) / total_rows, 1.0)
                 progress_bar.progress(progress)
@@ -344,7 +368,15 @@ def run_calculations(df: pd.DataFrame,
         
         success_rate = (success_count / total_rows) * 100 if total_rows > 0 else 0
         
+        # Show results count
+        non_null_count = result_df[output_col].notna().sum()
         st.success(f"✅ Completed: {success_count}/{total_rows} rows ({success_rate:.1f}% success)")
+        st.info(f"Non-null values in {output_col}: {non_null_count}")
+        
+        # Show sample of calculated values
+        if non_null_count > 0:
+            sample_vals = result_df[output_col].dropna().head(5).tolist()
+            st.write(f"Sample calculated values: {sample_vals}")
         
         calculation_results.append(CalculationResult(
             formula_name=f"{formula_name} → {output_col}",
@@ -487,7 +519,7 @@ def main():
                 label="📥 Download Excel",
                 data=excel_data,
                 file_name="variable_mappings.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                mime="application/vnd.openxmlformats-officedependent.spreadsheetml.sheet",
                 help="Download mappings as Excel file"
             )
     
@@ -515,6 +547,13 @@ def main():
         st.error("❌ No formulas found. Please extract formulas first.")
         st.info("💡 Go back to **Formula Extraction** to extract formulas from your document.")
         return
+    
+    # Show available formulas
+    st.subheader("📋 Available Formulas")
+    with st.expander(f"View {len(st.session_state.formulas)} extracted formulas"):
+        for i, formula in enumerate(st.session_state.formulas, 1):
+            st.markdown(f"**{i}. {formula.get('formula_name', 'Unknown')}**")
+            st.code(formula.get('formula_expression', ''))
     
     # Option to reupload or use existing
     st.subheader("📊 Data Source")
@@ -558,7 +597,7 @@ def main():
         # Select output columns
         st.subheader("🎯 Select Output Columns")
         st.markdown("Choose which columns should be filled with formula results. "
-                    "Only formulas matching these columns will be executed.")
+                    "Leave empty to create new columns for all formulas.")
         
         available_cols = calc_df.columns.tolist()
         
@@ -576,10 +615,10 @@ def main():
             st.info(f"💡 Suggested columns based on formula names: {', '.join(suggested_cols[:5])}")
         
         selected_output_cols = st.multiselect(
-            "Output Columns",
+            "Output Columns (optional - leave empty to create new columns)",
             options=available_cols,
             default=suggested_cols[:5] if suggested_cols else [],
-            help="Select columns where formula results will be written"
+            help="Select columns where formula results will be written. Leave empty to create new columns."
         )
         
         if selected_output_cols:
@@ -595,6 +634,8 @@ def main():
                     if matched_col in selected_output_cols:
                         st.markdown(f"- **{fname}** → `{matched_col}`")
                         st.code(f"Expression: {fexpr}")
+        else:
+            st.info("ℹ️ No output columns selected. New columns will be created for each formula.")
         
         st.markdown("---")
         
@@ -602,25 +643,9 @@ def main():
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
         
         with col_btn1:
-            run_disabled = not selected_output_cols
-            
-            if st.button("▶️ Run Calculations", type="primary", disabled=run_disabled):
+            if st.button("▶️ Run Calculations", type="primary"):
                 with st.spinner("Initializing calculation engine..."):
-                    # Prepare Mappings
-                    transformed_mappings = {}
-                    for header, var_name in st.session_state.header_to_var_mapping.items():
-                        if not header or not var_name:
-                            continue
-                        
-                        transformed_mappings[var_name] = VariableMapping(
-                            variable_name=var_name,
-                            mapped_header=header,
-                            confidence_score=1.0,
-                            matching_method="session_state",
-                            is_verified=True
-                        )
-                    
-                    st.info(f"📊 Using {len(transformed_mappings)} variable mappings")
+                    st.info(f"📊 Using {len(st.session_state.header_to_var_mapping)} variable mappings")
                     
                     formulas_to_run = st.session_state.formulas
                     
@@ -628,7 +653,7 @@ def main():
                         result_df, calc_results = run_calculations(
                             calc_df,
                             formulas_to_run,
-                            transformed_mappings,
+                            st.session_state.header_to_var_mapping,
                             selected_output_cols
                         )
                         
@@ -694,9 +719,12 @@ def main():
         st.markdown("### Results Data")
         
         # Show statistics for calculated columns
-        if selected_output_cols:
+        calculated_cols = [col for col in st.session_state.results_df.columns 
+                          if col not in calc_df.columns or col in (selected_output_cols if selected_output_cols else [])]
+        
+        if calculated_cols:
             st.write("**Calculated Column Statistics:**")
-            for col in selected_output_cols:
+            for col in calculated_cols:
                 if col in st.session_state.results_df.columns:
                     non_null_count = st.session_state.results_df[col].notna().sum()
                     st.write(f"- **{col}**: {non_null_count} non-null values out of {total_rows}")
