@@ -1124,7 +1124,7 @@ def main():
         
         with col_exp3:
             if st.button("➡️ Proceed to Calculations", type="primary", key="goto_calc"):
-                st.switch_page("pages/3_Calculator.py")
+                st.switch_page("pages/3_Calculation_Engine.py")
     
     # Footer
     st.markdown(
