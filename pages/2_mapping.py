@@ -394,8 +394,7 @@ class VariableHeaderMatcher:
             
             # Remove markdown code blocks if present
             if response_text.startswith('```'):
-                response_text = re.sub(r'^```json?\s*|\s*```
-    , '', response_text, flags=re.MULTILINE).strip()
+                response_text = re.sub(r'^```json?\s*|\s*```', '', response_text, flags=re.MULTILINE).strip()
             
             # Parse JSON
             try:
