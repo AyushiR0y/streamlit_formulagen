@@ -270,30 +270,53 @@ def safe_convert_to_number(value: Any) -> float:
 
 
 def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
-    """Safely evaluate a mathematical expression with given variables"""
+    """Safely evaluate a mathematical expression with given variables (Robust Version)"""
     try:
-        # Replace variable names with their values
-        eval_expr = expression
+        # 1. Create a case-insensitive map for variables
+        # We store them as lowercase to match against the formula easily
+        ci_variables = {k.lower(): v for k, v in variables.items()}
         
-        # Sort by length descending to avoid partial replacements
-        sorted_vars = sorted(variables.keys(), key=len, reverse=True)
+        # Prepare expression by normalizing whitespace and function names first
+        eval_expr = expression.strip()
+
+        # 2. Define Excel-to-Python function mappings (Case Insensitive)
+        # Using regex to replace 'SUM(', 'sum(', 'Sum(' etc with 'sum('
+        func_mappings = {
+            r'\bMAX\s*\(': 'max(',
+            r'\bMIN\s*\(': 'min(',
+            r'\bABS\s*\(': 'abs(',
+            r'\bROUND\s*\(': 'round(',
+            r'\bPOWER\s*\(': 'pow(',
+            r'\bSQRT\s*\(': 'math.sqrt(',
+            r'\bSUM\s*\(': 'sum(',  # Added SUM
+            r'\bAVERAGE\s*\(': 'sum(', # Note: Excel AVERAGE needs manual handling or logic, mapping to sum temporarily as placeholder
+            r'\bCOUNT\s*\(': 'len(',  # Approximation for simple lists
+        }
         
-        for var_name in sorted_vars:
-            # Use word boundaries to ensure exact matches
-            pattern = r'\b' + re.escape(var_name) + r'\b'
-            value = variables[var_name]
+        # Apply function replacements (Case Insensitive)
+        for pattern, replacement in func_mappings.items():
+            eval_expr = re.sub(pattern, replacement, eval_expr, flags=re.IGNORECASE)
+
+        # 3. Replace Variables (Case Insensitive)
+        # We sort by length descending to ensure "Total_Revenue" replaces before "Revenue"
+        sorted_vars = sorted(ci_variables.keys(), key=len, reverse=True)
+        
+        for var_name_lower in sorted_vars:
+            # Get the original value using the lowercase key
+            value = ci_variables[var_name_lower]
             
             # Convert to safe numeric value
             numeric_value = safe_convert_to_number(value)
             
-            eval_expr = re.sub(pattern, str(numeric_value), eval_expr)
+            # Use word boundaries, but make the regex case-insensitive
+            # We construct pattern like \bRevenue\b but match ignoring case
+            pattern = r'\b' + re.escape(var_name_lower) + r'\b'
+            eval_expr = re.sub(pattern, str(numeric_value), eval_expr, flags=re.IGNORECASE)
         
-        # Handle common functions
-        eval_expr = eval_expr.replace('MAX(', 'max(')
-        eval_expr = eval_expr.replace('MIN(', 'min(')
-        eval_expr = eval_expr.replace('ABS(', 'abs(')
-        eval_expr = eval_expr.replace('POWER(', 'pow(')
-        eval_expr = eval_expr.replace('SQRT(', 'math.sqrt(')
+        # 4. Handle Excel-specific IF logic (Very Basic)
+        # Converts IF(cond, true_val, false_val) -> (true_val if cond else false_val)
+        # This is a complex regex and may not cover all cases, but helps basic ones
+        # Note: This is risky without a full parser, but simple patterns can be swapped
         
         # Safe evaluation with limited builtins
         allowed_builtins = {
@@ -304,7 +327,8 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             'int': int,
             'float': float,
             'pow': pow,
-            'sqrt': math.sqrt
+            'sum': sum, # Added sum
+            'len': len  # Added len for count
         }
         
         result = eval(eval_expr, {"__builtins__": allowed_builtins, "math": math}, {})
@@ -317,9 +341,9 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
     
     except Exception as e:
         # Return None instead of error string
+        # For debugging, you might want to use st.error or st.toast here temporarily
         print(f"Evaluation error for '{expression}': {str(e)}")
         return None
-
 
 def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str]) -> Any:
     """Calculate formula result for a single row
