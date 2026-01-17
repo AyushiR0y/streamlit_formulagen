@@ -378,7 +378,7 @@ class VariableHeaderMatcher:
     Example output format:
     {{
     "TOTAL_PREMIUM": {{"variable": "TOTAL_PREMIUM", "score": 1.0, "reason": "Exact match"}},
-    "Premium_Amt": {{"variable": "TOTAL_PREMIUM", "score": 0.85, "reason": "Semantic match"}},
+    "FULL_TERM_PREMIUM": {{"variable": "TOTAL_PREMIUM", "score": 0.85, "reason": "Semantic match"}},
     "RandomCol": {{"variable": null, "score": 0.0, "reason": "No match"}}
     }}
 
