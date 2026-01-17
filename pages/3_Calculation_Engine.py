@@ -544,267 +544,181 @@ def main():
     has_mappings = 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping
     has_formulas = 'formulas' in st.session_state and st.session_state.formulas
     
-    # === ALWAYS SHOW UPLOAD SECTION ===
-    st.markdown("---")
-    st.subheader("📤 Upload Configuration Files")
-    
-    # Create tabs for uploading different resources
-    tab1, tab2 = st.tabs(["📥 Upload Mappings", "📥 Upload Formulas"])
-    
-    # === TAB 1: UPLOAD MAPPINGS ===
-    with tab1:
-        if has_mappings:
-            st.success(f"✅ Mappings already loaded ({len(st.session_state.header_to_var_mapping)} mappings)")
-            st.info("You can upload new mappings to replace the current ones.")
+    # === UPLOAD SECTION (only show if missing) ===
+    if not has_mappings or not has_formulas:
+        st.markdown("---")
+        st.subheader("📤 Upload Configuration Files")
         
-        st.markdown("### Import Variable Mappings")
+        col_upload1, col_upload2 = st.columns(2)
         
-        col_import1, col_import2 = st.columns(2)
-        
-        with col_import1:
-            st.markdown("#### Upload JSON Mapping")
-            st.markdown("**Expected format:** Excel Header → Variable Name")
-            st.code("""{
-    "BENEFIT_TERM": "BENEFIT_TERM",
-    "PREMIUM_TERM": "PREMIUM_TERM",
-    "FULL_TERM_PREMIUM": "TOTAL_PREMIUM",
-    "SUM_ASSURED": "SUM_ASSURED",
-    "GSV": "GSV",
-    "SSV": "SSV"
-}""", language="json")
+        # === MAPPINGS UPLOAD ===
+        with col_upload1:
+            st.markdown("### 📋 Variable Mappings")
+            if has_mappings:
+                st.success(f"✅ {len(st.session_state.header_to_var_mapping)} mappings loaded")
+            else:
+                st.info("Upload JSON, Excel, or CSV file")
             
-            uploaded_json = st.file_uploader(
-                "Upload JSON mapping file",
-                type=['json'],
-                key="json_uploader",
-                help="Upload a JSON file with Excel header to variable name mappings"
+            uploaded_mapping = st.file_uploader(
+                "Upload Mappings File",
+                type=['json', 'xlsx', 'xls', 'csv'],
+                key="mapping_uploader",
+                help="JSON, Excel, or CSV file with Excel_Header → Variable_Name mappings"
             )
             
-            if uploaded_json:
+            if uploaded_mapping:
+                file_extension = Path(uploaded_mapping.name).suffix.lower()
                 try:
-                    imported_mappings = import_mappings_from_json(uploaded_json)
-                    st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from JSON")
+                    if file_extension == '.json':
+                        imported_mappings = import_mappings_from_json(uploaded_mapping)
+                    elif file_extension == '.csv':
+                        # Handle CSV as Excel
+                        df_temp = pd.read_csv(uploaded_mapping)
+                        if 'Excel_Header' not in df_temp.columns or 'Variable_Name' not in df_temp.columns:
+                            raise ValueError("CSV must contain 'Excel_Header' and 'Variable_Name' columns")
+                        imported_mappings = {}
+                        for _, row in df_temp.iterrows():
+                            header = str(row['Excel_Header']).strip()
+                            var_name = str(row['Variable_Name']).strip()
+                            if header and var_name and header != 'nan' and var_name != 'nan':
+                                imported_mappings[header] = var_name
+                    else:
+                        imported_mappings = import_mappings_from_excel(uploaded_mapping)
                     
-                    with st.expander("Preview imported mappings"):
+                    st.success(f"✅ Imported {len(imported_mappings)} mappings")
+                    
+                    with st.expander("Preview mappings"):
                         st.json(imported_mappings)
                     
-                    if st.button("✔️ Apply JSON Mappings", type="primary", key="apply_json"):
+                    if st.button("✔️ Apply Mappings", type="primary", key="apply_mappings"):
                         st.session_state.header_to_var_mapping = imported_mappings
-                        st.success("✅ Mappings applied to session!")
+                        st.success("✅ Mappings applied!")
                         st.rerun()
                 
                 except Exception as e:
-                    st.error(f"❌ Error importing JSON: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
         
-        with col_import2:
-            st.markdown("#### Upload Excel Mapping")
-            st.markdown("Excel file should have columns: `Excel_Header` and `Variable_Name`")
+        # === FORMULAS UPLOAD ===
+        with col_upload2:
+            st.markdown("### 🧮 Formulas")
+            if has_formulas:
+                st.success(f"✅ {len(st.session_state.formulas)} formulas loaded")
+            else:
+                st.info("Upload JSON, Excel, or CSV file")
             
-            uploaded_excel = st.file_uploader(
-                "Upload Excel mapping file",
-                type=['xlsx', 'xls'],
-                key="excel_mapping_uploader",
-                help="Upload an Excel file with 'Excel_Header' and 'Variable_Name' columns"
+            uploaded_formulas = st.file_uploader(
+                "Upload Formulas File",
+                type=['json', 'xlsx', 'xls', 'csv'],
+                key="formulas_uploader",
+                help="JSON, Excel, or CSV file with formula definitions"
             )
             
-            if uploaded_excel:
+            if uploaded_formulas:
+                file_extension = Path(uploaded_formulas.name).suffix.lower()
                 try:
-                    imported_mappings = import_mappings_from_excel(uploaded_excel)
-                    st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from Excel")
+                    if file_extension == '.json':
+                        imported_formulas = import_formulas_from_json(uploaded_formulas)
+                    elif file_extension == '.csv':
+                        # Handle CSV as Excel
+                        df_temp = pd.read_csv(uploaded_formulas)
+                        if 'formula_name' not in df_temp.columns or 'formula_expression' not in df_temp.columns:
+                            raise ValueError("CSV must contain 'formula_name' and 'formula_expression' columns")
+                        imported_formulas = []
+                        for _, row in df_temp.iterrows():
+                            formula_name = str(row['formula_name']).strip()
+                            formula_expr = str(row['formula_expression']).strip()
+                            if formula_name and formula_expr and formula_name != 'nan' and formula_expr != 'nan':
+                                formula_dict = {
+                                    'formula_name': formula_name,
+                                    'formula_expression': formula_expr
+                                }
+                                if 'description' in df_temp.columns and pd.notna(row.get('description')):
+                                    formula_dict['description'] = str(row['description']).strip()
+                                if 'variables_used' in df_temp.columns and pd.notna(row.get('variables_used')):
+                                    formula_dict['variables_used'] = str(row['variables_used']).strip()
+                                imported_formulas.append(formula_dict)
+                    else:
+                        imported_formulas = import_formulas_from_excel(uploaded_formulas)
                     
-                    with st.expander("Preview imported mappings"):
-                        df_preview = pd.DataFrame([
-                            {"Excel_Header": k, "Variable_Name": v}
-                            for k, v in imported_mappings.items()
-                        ])
-                        st.dataframe(df_preview, use_container_width=True)
+                    st.success(f"✅ Imported {len(imported_formulas)} formulas")
                     
-                    if st.button("✔️ Apply Excel Mappings", type="primary", key="apply_excel"):
-                        st.session_state.header_to_var_mapping = imported_mappings
-                        st.success("✅ Mappings applied to session!")
-                        st.rerun()
-                
-                except Exception as e:
-                    st.error(f"❌ Error importing Excel: {str(e)}")
-    
-    # === TAB 2: UPLOAD FORMULAS ===
-    with tab2:
-        if has_formulas:
-            st.success(f"✅ Formulas already loaded ({len(st.session_state.formulas)} formulas)")
-            st.info("You can upload new formulas to replace the current ones.")
-        
-        st.markdown("### Import Formulas")
-        
-        col_form1, col_form2 = st.columns(2)
-        
-        with col_form1:
-            st.markdown("#### Upload JSON Formulas")
-            st.markdown("**Supported JSON formats:**")
-            
-            st.markdown("**Format 1: Direct list**")
-            st.code("""[
-    {
-        "formula_name": "TOTAL_PREMIUM_PAID",
-        "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
-    }
-]""", language="json")
-            
-            st.markdown("**Format 2: Extraction output**")
-            st.code("""{
-    "formulas": [
-        {
-            "formula_name": "TOTAL_PREMIUM_PAID",
-            "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
-        }
-    ]
-}""", language="json")
-            
-            uploaded_formula_json = st.file_uploader(
-                "Upload JSON formulas file",
-                type=['json'],
-                key="formula_json_uploader",
-                help="Accepts both direct formula lists and extraction output format"
-            )
-            
-            if uploaded_formula_json:
-                try:
-                    imported_formulas = import_formulas_from_json(uploaded_formula_json)
-                    st.success(f"✅ Successfully imported {len(imported_formulas)} formulas from JSON")
+                    with st.expander("Preview formulas"):
+                        for i, f in enumerate(imported_formulas[:3], 1):
+                            st.markdown(f"**{i}. {f.get('formula_name')}**")
+                            st.code(f.get('formula_expression'))
+                        if len(imported_formulas) > 3:
+                            st.info(f"... and {len(imported_formulas) - 3} more")
                     
-                    with st.expander("Preview imported formulas"):
-                        for i, formula in enumerate(imported_formulas, 1):
-                            st.markdown(f"**{i}. {formula.get('formula_name', 'Unknown')}**")
-                            st.code(formula.get('formula_expression', ''))
-                    
-                    if st.button("✔️ Apply JSON Formulas", type="primary", key="apply_formula_json"):
+                    if st.button("✔️ Apply Formulas", type="primary", key="apply_formulas"):
                         st.session_state.formulas = imported_formulas
-                        st.success("✅ Formulas applied to session!")
+                        st.success("✅ Formulas applied!")
                         st.rerun()
                 
                 except Exception as e:
-                    st.error(f"❌ Error importing JSON: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
         
-        with col_form2:
-            st.markdown("#### Upload Excel Formulas")
-            st.markdown("Excel file should have columns: `formula_name`, `formula_expression`")
-            st.markdown("Optional columns: `description`, `variables_used`")
+        st.markdown("---")
+        
+        # Show current status
+        status_col1, status_col2 = st.columns(2)
+        with status_col1:
+            if has_mappings:
+                st.success(f"✅ Mappings: {len(st.session_state.header_to_var_mapping)} loaded")
+            else:
+                st.error("❌ Mappings: Not loaded")
+        
+        with status_col2:
+            if has_formulas:
+                st.success(f"✅ Formulas: {len(st.session_state.formulas)} loaded")
+            else:
+                st.error("❌ Formulas: Not loaded")
+        
+        # Check if we can proceed
+        if not has_mappings or not has_formulas:
+            missing_items = []
+            if not has_mappings:
+                missing_items.append("Variable Mappings")
+            if not has_formulas:
+                missing_items.append("Formulas")
             
-            uploaded_formula_excel = st.file_uploader(
-                "Upload Excel formulas file",
-                type=['xlsx', 'xls'],
-                key="formula_excel_uploader",
-                help="Upload an Excel file with formula definitions"
-            )
-            
-            if uploaded_formula_excel:
-                try:
-                    imported_formulas = import_formulas_from_excel(uploaded_formula_excel)
-                    st.success(f"✅ Successfully imported {len(imported_formulas)} formulas from Excel")
-                    
-                    with st.expander("Preview imported formulas"):
-                        df_preview = pd.DataFrame(imported_formulas)
-                        st.dataframe(df_preview, use_container_width=True)
-                    
-                    if st.button("✔️ Apply Excel Formulas", type="primary", key="apply_formula_excel"):
-                        st.session_state.formulas = imported_formulas
-                        st.success("✅ Formulas applied to session!")
-                        st.rerun()
-                
-                except Exception as e:
-                    st.error(f"❌ Error importing Excel: {str(e)}")
-    
-    st.markdown("---")
-    
-    # Show current status
-    status_col1, status_col2 = st.columns(2)
-    with status_col1:
-        if has_mappings:
-            st.success(f"✅ Mappings: {len(st.session_state.header_to_var_mapping)} loaded")
-        else:
-            st.error("❌ Mappings: Not loaded")
-    
-    with status_col2:
-        if has_formulas:
-            st.success(f"✅ Formulas: {len(st.session_state.formulas)} loaded")
-        else:
-            st.error("❌ Formulas: Not loaded")
-    
-    # Check if we can proceed
-    if not has_mappings or not has_formulas:
-        missing_items = []
-        if not has_mappings:
-            missing_items.append("Variable Mappings")
-        if not has_formulas:
-            missing_items.append("Formulas")
+            st.warning(f"⚠️ Missing: {', '.join(missing_items)}")
+            st.info("👆 Upload the missing files above to continue.")
+            return
+    else:
+        # Show summary when both are loaded
+        st.markdown("---")
+        col_sum1, col_sum2 = st.columns(2)
         
-        st.warning(f"⚠️ Missing: {', '.join(missing_items)}")
-        st.info("👆 Upload the missing files above to enable the calculation engine.")
-        return
-    
-    # === MAPPING EXPORT SECTION (only shown if mappings exist) ===
-    with st.expander("💾 Export Current Mappings"):
-        st.markdown("Save your current mappings for future use")
+        with col_sum1:
+            st.success(f"✅ **Mappings:** {len(st.session_state.header_to_var_mapping)} variables")
+            with st.expander("🔍 View Mappings"):
+                df_current = pd.DataFrame([
+                    {"Excel_Header": k, "Variable_Name": v}
+                    for k, v in st.session_state.header_to_var_mapping.items()
+                ])
+                st.dataframe(df_current, use_container_width=True)
         
-        col_export1, col_export2 = st.columns(2)
-        
-        with col_export1:
-            st.markdown("#### Export as JSON")
-            json_data = export_mappings_to_json(st.session_state.header_to_var_mapping)
-            
-            st.download_button(
-                label="📥 Download JSON",
-                data=json_data,
-                file_name="variable_mappings.json",
-                mime="application/json",
-                help="Download mappings as JSON file"
-            )
-        
-        with col_export2:
-            st.markdown("#### Export as Excel")
-            excel_data = export_mappings_to_excel(st.session_state.header_to_var_mapping)
-            
-            st.download_button(
-                label="📥 Download Excel",
-                data=excel_data,
-                file_name="variable_mappings.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                help="Download mappings as Excel file"
-            )
-    
-    # Show current configuration summary
-    st.markdown("---")
-    col_sum1, col_sum2 = st.columns(2)
-    
-    with col_sum1:
-        st.success(f"✅ **Mappings:** {len(st.session_state.header_to_var_mapping)} variables mapped")
-        with st.expander("🔍 View Current Mappings"):
-            df_current = pd.DataFrame([
-                {"Excel_Header": k, "Variable_Name": v}
-                for k, v in st.session_state.header_to_var_mapping.items()
-            ])
-            st.dataframe(df_current, use_container_width=True)
-    
-    with col_sum2:
-        st.success(f"✅ **Formulas:** {len(st.session_state.formulas)} formulas loaded")
-        with st.expander("🔍 View Available Formulas"):
-            for i, formula in enumerate(st.session_state.formulas, 1):
-                st.markdown(f"**{i}. {formula.get('formula_name', 'Unknown')}**")
-                st.code(formula.get('formula_expression', ''))
+        with col_sum2:
+            st.success(f"✅ **Formulas:** {len(st.session_state.formulas)} loaded")
+            with st.expander("🔍 View Formulas"):
+                for i, formula in enumerate(st.session_state.formulas, 1):
+                    st.markdown(f"**{i}. {formula.get('formula_name', 'Unknown')}**")
+                    st.code(formula.get('formula_expression', ''))
     
     st.markdown("---")
     
     # Check for required session state
     if 'excel_df' not in st.session_state or st.session_state.excel_df is None:
-        st.warning("⚠️ No Excel data found in session.")
-        st.info("💡 Upload your data file below or go back to **Variable Mapping** to upload your file.")
+        st.warning("⚠️ No data file found in session.")
+        st.info("💡 Upload your data file below.")
         
-        # Allow uploading Excel data here
+        # Allow uploading data file here
         st.markdown("---")
         st.subheader("📊 Upload Data File")
         
         uploaded_data_file = st.file_uploader(
-            "Upload Excel/CSV file with your data",
-            type=['csv', 'xlsx', 'xls'],
+            "Upload your data file (Excel, CSV, or JSON)",
+            type=['csv', 'xlsx', 'xls', 'json'],
             key="data_file_uploader",
             help="Upload the file containing the data you want to calculate on"
         )
@@ -814,6 +728,8 @@ def main():
             try:
                 if file_extension == '.csv':
                     data_df = pd.read_csv(uploaded_data_file)
+                elif file_extension == '.json':
+                    data_df = pd.read_json(uploaded_data_file)
                 else:
                     data_df = pd.read_excel(uploaded_data_file)
                 
@@ -840,16 +756,16 @@ def main():
     col_file1, col_file2 = st.columns([2, 1])
     
     with col_file1:
-        use_existing = st.checkbox("Use previously uploaded Excel file", value=True)
+        use_existing = st.checkbox("Use previously uploaded data file", value=True)
     
     calc_df = None
     
     if not use_existing:
-        st.markdown("### Upload New Excel File")
+        st.markdown("### Upload New Data File")
         uploaded_calc_file = st.file_uploader(
-            "Upload Excel/CSV for calculations",
-            type=['csv', 'xlsx', 'xls'],
-            key="calc_excel_uploader"
+            "Upload data file (Excel, CSV, or JSON)",
+            type=['csv', 'xlsx', 'xls', 'json'],
+            key="calc_data_uploader"
         )
         
         if uploaded_calc_file:
@@ -857,6 +773,8 @@ def main():
             try:
                 if file_extension == '.csv':
                     calc_df = pd.read_csv(uploaded_calc_file)
+                elif file_extension == '.json':
+                    calc_df = pd.read_json(uploaded_calc_file)
                 else:
                     calc_df = pd.read_excel(uploaded_calc_file)
                 st.success(f"✅ Loaded {len(calc_df)} rows with {len(calc_df.columns)} columns")
