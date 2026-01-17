@@ -592,6 +592,7 @@ class StableChunkedDocumentFormulaExtractor:
     Examples:
     - If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
     - If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
+    - If document says "Sum Assured on Death is higher of sum assured, 10 times annual premium or amount of ROP benefit": return "MAX(SUM_ASSURED, 10 * ANNUAL_PREMIUM, ROP_Benefit)"
     - If SSV was already extracted as a formula: use "SSV", not its components
     - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED
     - Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sa_on_death as a new variable
