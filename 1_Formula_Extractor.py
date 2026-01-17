@@ -563,42 +563,48 @@ class StableChunkedDocumentFormulaExtractor:
         models_to_try = ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4"]
         
         prompt = f"""
-        Extract the calculation formula for "{formula_name}" from the following document content.
+    Extract the calculation formula for "{formula_name}" from the following document content.
 
-        DOCUMENT CONTENT:
-        {context}
+    DOCUMENT CONTENT:
+    {context}
 
-        AVAILABLE VARIABLES:
-        {', '.join(self.input_variables.keys())}
-    
-        INSTRUCTIONS:
-        1. Identify a mathematical formula or calculation method for "{formula_name}"
-        2. Use the available variables and generated variables from the previous formulas where possible.
-        3. Extract the formula expression from natural language.
-        4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
-        5. If no formula is clearly defined, respond with "FORMULA_NOT_FOUND" and give reasoning
-        6. Don't skip any of {formula_name}. If not found, say "FORMULA_NOT_FOUND".
-        6. Pay close attention to formulas involving:
-        - terms around GSV, SSV (and Surrender Paid Amount is usually a max of multiple components)
-        - exponential terms like (1/1.05)^N
-        - conditions like policy term > 3 years
-        - Capital Units references
-        - ON DEATH is an important qualifier
-        Examples:
-        - If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
-        - If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
-        - If SSV was already extracted as a formula: use "SSV", not its components
-        - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED. 
-        - Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sa_on_death as a new variable.
-        RESPONSE FORMAT:
-        FORMULA_EXPRESSION: [mathematical expression using available variables]
-        VARIABLES_USED: [comma-separated list of variables from available list]
-        DOCUMENT_EVIDENCE: [exact text from document supporting this formula]
-        BUSINESS_CONTEXT: [brief explanation of what this formula calculates]
-        CONFIDENCE_LEVEL: [number between 0.1 and 1.0]
+    AVAILABLE VARIABLES:
+    {', '.join(self.input_variables.keys())}
 
-        Respond with only the requested format.If unsure about any part, explain why in the response.
-        """
+    INSTRUCTIONS:
+    1. Identify a mathematical formula or calculation method for "{formula_name}"
+    2. Use the available variables and generated variables from the previous formulas where possible
+    3. Extract the formula expression from natural language
+    4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
+    5. IMPORTANT: You MUST provide a formula for "{formula_name}". Do not skip it.
+    6. If the exact formula is not clearly defined in the document:
+    - Make a reasonable inference based on similar formulas
+    - Use industry-standard calculations as fallback
+    - Provide a placeholder formula with low confidence
+    - Example: If no formula found, you could return "{formula_name}" with confidence 0.3
+    7. Pay close attention to formulas involving:
+    - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
+    - Exponential terms like (1/1.05)^N
+    - Conditions like policy term > 3 years
+    - Capital Units references
+    - ON_DEATH is an important qualifier
+
+    Examples:
+    - If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
+    - If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
+    - If SSV was already extracted as a formula: use "SSV", not its components
+    - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED
+    - Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sa_on_death as a new variable
+
+    RESPONSE FORMAT:
+    FORMULA_EXPRESSION: [mathematical expression using available variables]
+    VARIABLES_USED: [comma-separated list of variables from available list]
+    DOCUMENT_EVIDENCE: [exact text from document supporting this formula, or "INFERRED" if not explicit]
+    BUSINESS_CONTEXT: [brief explanation of what this formula calculates]
+    CONFIDENCE_LEVEL: [number between 0.1 and 1.0 - use lower values for inferred formulas]
+
+    Respond with only the requested format. If you cannot find explicit documentation, make a reasonable inference and set confidence accordingly.
+    """
         
         for model in models_to_try:
             try:
@@ -612,10 +618,14 @@ class StableChunkedDocumentFormulaExtractor:
                 
                 response_text = response.choices[0].message.content
                 
-                if "FORMULA_NOT_FOUND" in response_text:
-                    return None
+                # Parse the response - don't skip formulas anymore
+                parsed_formula = self._parse_stable_formula_response(response_text, formula_name)
                 
-                return self._parse_stable_formula_response(response_text, formula_name)
+                # If parsing succeeded, return it (even if confidence is low)
+                if parsed_formula:
+                    return parsed_formula
+                
+            
                 
             except Exception as e:
                 error_msg = str(e)
@@ -632,7 +642,15 @@ class StableChunkedDocumentFormulaExtractor:
         
         # If all models fail, try offline extraction
         st.warning(f"⚠️ All API models failed for {formula_name}. Attempting offline extraction...")
-        return self._extract_formula_offline(formula_name, context)
+        offline_result = self._extract_formula_offline(formula_name, context)
+        
+        # If offline also fails, create a basic placeholder
+        if offline_result is None:
+            st.warning(f"⚠️ Offline extraction failed for {formula_name}. Creating basic placeholder.")
+            return self._create_placeholder_formula(formula_name, "No extraction possible")
+        
+        return offline_result
+
 
     def _parse_stable_formula_response(self, response_text: str, formula_name: str) -> Optional[ExtractedFormula]:
         """Parse formula response with stable extraction"""
