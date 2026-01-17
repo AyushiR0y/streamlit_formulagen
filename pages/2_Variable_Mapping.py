@@ -374,6 +374,8 @@ class VariableHeaderMatcher:
     - "variable": best matching variable name or null if no good match
     - "score": confidence 0.0-1.0 (1.0=exact, 0.9=substring, 0.7-0.8=semantic, 0.0=no match)
     - "reason": brief explanation
+    - Use "None of the following" as default if no semantic or syntactic match.
+    - Don't use single letter variables unless exact match in length and meaning. 
 
     Example output format:
     {{
