@@ -75,6 +75,7 @@ INPUT_VARIABLES = {
     'SSV1_FACTOR': 'Surrender Value Factor',
     'SSV3_FACTOR': 'Special Surrender Value Factor for paid-up income benefits',
     'SSV2_FACTOR': 'Special Surrender Value Factor for return of premium',
+    'N':'min(Policy_term, 20) - Elapsed_policy_duration',
     'FUND_VALUE': 'The total value of the policy fund at surrender or maturity',
     'SYSTEM_PAID': 'Amount paid by system for surrender or maturity',
     'CAPITAL_UNITS_VALUE': 'Number of units in policy fund at surrender or maturity',
