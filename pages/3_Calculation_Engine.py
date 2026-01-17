@@ -556,8 +556,6 @@ def main():
             st.markdown("### 📋 Variable Mappings")
             if has_mappings:
                 st.success(f"✅ {len(st.session_state.header_to_var_mapping)} mappings loaded")
-            else:
-                st.info("Upload JSON, Excel, or CSV file")
             
             uploaded_mapping = st.file_uploader(
                 "Upload Mappings File",
@@ -566,13 +564,12 @@ def main():
                 help="JSON, Excel, or CSV file with Excel_Header → Variable_Name mappings"
             )
             
-            if uploaded_mapping:
+            if uploaded_mapping and not has_mappings:
                 file_extension = Path(uploaded_mapping.name).suffix.lower()
                 try:
                     if file_extension == '.json':
                         imported_mappings = import_mappings_from_json(uploaded_mapping)
                     elif file_extension == '.csv':
-                        # Handle CSV as Excel
                         df_temp = pd.read_csv(uploaded_mapping)
                         if 'Excel_Header' not in df_temp.columns or 'Variable_Name' not in df_temp.columns:
                             raise ValueError("CSV must contain 'Excel_Header' and 'Variable_Name' columns")
@@ -587,12 +584,8 @@ def main():
                     
                     st.success(f"✅ Imported {len(imported_mappings)} mappings")
                     
-                    with st.expander("Preview mappings"):
-                        st.json(imported_mappings)
-                    
                     if st.button("✔️ Apply Mappings", type="primary", key="apply_mappings"):
                         st.session_state.header_to_var_mapping = imported_mappings
-                        st.success("✅ Mappings applied!")
                         st.rerun()
                 
                 except Exception as e:
@@ -603,8 +596,6 @@ def main():
             st.markdown("### 🧮 Formulas")
             if has_formulas:
                 st.success(f"✅ {len(st.session_state.formulas)} formulas loaded")
-            else:
-                st.info("Upload JSON, Excel, or CSV file")
             
             uploaded_formulas = st.file_uploader(
                 "Upload Formulas File",
@@ -613,13 +604,12 @@ def main():
                 help="JSON, Excel, or CSV file with formula definitions"
             )
             
-            if uploaded_formulas:
+            if uploaded_formulas and not has_formulas:
                 file_extension = Path(uploaded_formulas.name).suffix.lower()
                 try:
                     if file_extension == '.json':
                         imported_formulas = import_formulas_from_json(uploaded_formulas)
                     elif file_extension == '.csv':
-                        # Handle CSV as Excel
                         df_temp = pd.read_csv(uploaded_formulas)
                         if 'formula_name' not in df_temp.columns or 'formula_expression' not in df_temp.columns:
                             raise ValueError("CSV must contain 'formula_name' and 'formula_expression' columns")
@@ -642,16 +632,8 @@ def main():
                     
                     st.success(f"✅ Imported {len(imported_formulas)} formulas")
                     
-                    with st.expander("Preview formulas"):
-                        for i, f in enumerate(imported_formulas[:3], 1):
-                            st.markdown(f"**{i}. {f.get('formula_name')}**")
-                            st.code(f.get('formula_expression'))
-                        if len(imported_formulas) > 3:
-                            st.info(f"... and {len(imported_formulas) - 3} more")
-                    
                     if st.button("✔️ Apply Formulas", type="primary", key="apply_formulas"):
                         st.session_state.formulas = imported_formulas
-                        st.success("✅ Formulas applied!")
                         st.rerun()
                 
                 except Exception as e:
@@ -665,24 +647,16 @@ def main():
             if has_mappings:
                 st.success(f"✅ Mappings: {len(st.session_state.header_to_var_mapping)} loaded")
             else:
-                st.error("❌ Mappings: Not loaded")
+                st.warning("⚠️ Mappings: Not loaded")
         
         with status_col2:
             if has_formulas:
                 st.success(f"✅ Formulas: {len(st.session_state.formulas)} loaded")
             else:
-                st.error("❌ Formulas: Not loaded")
+                st.warning("⚠️ Formulas: Not loaded")
         
         # Check if we can proceed
         if not has_mappings or not has_formulas:
-            missing_items = []
-            if not has_mappings:
-                missing_items.append("Variable Mappings")
-            if not has_formulas:
-                missing_items.append("Formulas")
-            
-            st.warning(f"⚠️ Missing: {', '.join(missing_items)}")
-            st.info("👆 Upload the missing files above to continue.")
             return
     else:
         # Show summary when both are loaded
@@ -710,7 +684,6 @@ def main():
     # Check for required session state
     if 'excel_df' not in st.session_state or st.session_state.excel_df is None:
         st.warning("⚠️ No data file found in session.")
-        st.info("💡 Upload your data file below.")
         
         # Allow uploading data file here
         st.markdown("---")
@@ -733,14 +706,13 @@ def main():
                 else:
                     data_df = pd.read_excel(uploaded_data_file)
                 
-                st.success(f"✅ Loaded {len(data_df)} rows with {len(data_df.columns)} columns")
+                st.success(f"✅ Loaded {len(data_df)} rows, {len(data_df.columns)} columns")
                 
                 with st.expander("📊 Preview Data"):
                     st.dataframe(data_df.head(), use_container_width=True)
                 
                 if st.button("✔️ Use This Data File", type="primary"):
                     st.session_state.excel_df = data_df
-                    st.success("✅ Data file loaded to session!")
                     st.rerun()
             
             except Exception as e:
@@ -782,19 +754,17 @@ def main():
                 st.error(f"Error loading file: {e}")
     else:
         calc_df = st.session_state.excel_df
-        st.info(f"Using existing file with {len(calc_df)} rows and {len(calc_df.columns)} columns")
+        st.success(f"Using file: {len(calc_df)} rows, {len(calc_df.columns)} columns")
     
     if calc_df is not None:
         # Show preview
-        with st.expander("📊 Data Preview (First 5 Rows)"):
+        with st.expander("📊 Data Preview"):
             st.dataframe(calc_df.head(), use_container_width=True)
         
         st.markdown("---")
         
         # Select output columns
         st.subheader("🎯 Select Output Columns")
-        st.markdown("Choose which columns should be filled with formula results. "
-                    "Leave empty to create new columns for all formulas.")
         
         available_cols = calc_df.columns.tolist()
         
@@ -808,31 +778,15 @@ def main():
                     if col not in suggested_cols:
                         suggested_cols.append(col)
         
-        if suggested_cols:
-            st.info(f"💡 Suggested columns based on formula names: {', '.join(suggested_cols[:5])}")
-        
         selected_output_cols = st.multiselect(
-            "Output Columns (optional - leave empty to create new columns)",
+            "Choose columns to fill (leave empty to create new columns)",
             options=available_cols,
             default=suggested_cols[:5] if suggested_cols else [],
-            help="Select columns where formula results will be written. Leave empty to create new columns."
+            help="Select columns where formula results will be written"
         )
         
-        if selected_output_cols:
-            st.success(f"✅ Selected {len(selected_output_cols)} output column(s)")
-            
-            # Show which formulas will run
-            with st.expander("🔍 Preview: Formulas to be executed"):
-                for formula in st.session_state.formulas:
-                    fname = formula.get('formula_name', 'Unknown')
-                    fexpr = formula.get('formula_expression', '')
-                    matched_col = match_formula_to_output_column(fname, selected_output_cols)
-                    
-                    if matched_col in selected_output_cols:
-                        st.markdown(f"- **{fname}** → `{matched_col}`")
-                        st.code(f"Expression: {fexpr}")
-        else:
-            st.info("ℹ️ No output columns selected. New columns will be created for each formula.")
+        if not selected_output_cols:
+            st.info("ℹ️ New columns will be created for each formula")
         
         st.markdown("---")
         
@@ -841,9 +795,7 @@ def main():
         
         with col_btn1:
             if st.button("▶️ Run Calculations", type="primary"):
-                with st.spinner("Initializing calculation engine..."):
-                    st.info(f"📊 Using {len(st.session_state.header_to_var_mapping)} variable mappings")
-                    
+                with st.spinner("Running calculations..."):
                     formulas_to_run = st.session_state.formulas
                     
                     try:
@@ -858,7 +810,6 @@ def main():
                         st.session_state.calc_results = calc_results
                         
                         st.success("✅ Calculations complete!")
-                        st.balloons()
                         st.rerun()
                     
                     except Exception as e:
