@@ -544,28 +544,20 @@ def main():
     has_mappings = 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping
     has_formulas = 'formulas' in st.session_state and st.session_state.formulas
     
-    # === CONDITIONAL UPLOAD SECTION ===
-    if not has_mappings or not has_formulas:
-        missing_items = []
-        if not has_mappings:
-            missing_items.append("Variable Mappings")
-        if not has_formulas:
-            missing_items.append("Formulas")
+    # === ALWAYS SHOW UPLOAD SECTION ===
+    st.markdown("---")
+    st.subheader("📤 Upload Configuration Files")
+    
+    # Create tabs for uploading different resources
+    tab1, tab2 = st.tabs(["📥 Upload Mappings", "📥 Upload Formulas"])
+    
+    # === TAB 1: UPLOAD MAPPINGS ===
+    with tab1:
+        if has_mappings:
+            st.success(f"✅ Mappings already loaded ({len(st.session_state.header_to_var_mapping)} mappings)")
+            st.info("You can upload new mappings to replace the current ones.")
         
-        st.warning(f"⚠️ Missing: {', '.join(missing_items)}")
-        st.info("💡 You can upload the required files below or go back to previous pages to create them.")
-        
-        st.markdown("---")
-        
-        # Create tabs for uploading different resources
-        tab1, tab2 = st.tabs(["📥 Upload Mappings", "📥 Upload Formulas"])
-        
-        # === TAB 1: UPLOAD MAPPINGS ===
-        with tab1:
-            if has_mappings:
-                st.success(f"✅ Mappings already loaded ({len(st.session_state.header_to_var_mapping)} mappings)")
-            else:
-                st.subheader("📥 Import Variable Mappings")
+        st.markdown("### Import Variable Mappings")
                 
                 col_import1, col_import2 = st.columns(2)
                 
@@ -634,33 +626,42 @@ def main():
                         
                         except Exception as e:
                             st.error(f"❌ Error importing Excel: {str(e)}")
+    
+    st.markdown("---")
+    
+    # Show current status
+    status_col1, status_col2 = st.columns(2)
+    with status_col1:
+        if has_mappings:
+            st.success(f"✅ Mappings: {len(st.session_state.header_to_var_mapping)} loaded")
+        else:
+            st.error("❌ Mappings: Not loaded")
+    
+    with status_col2:
+        if has_formulas:
+            st.success(f"✅ Formulas: {len(st.session_state.formulas)} loaded")
+        else:
+            st.error("❌ Formulas: Not loaded")
+    
+    # Check if we can proceed
+    if not has_mappings or not has_formulas:
+        missing_items = []
+        if not has_mappings:
+            missing_items.append("Variable Mappings")
+        if not has_formulas:
+            missing_items.append("Formulas")
         
-        st.markdown("---")
-        
-        # Show current status
-        status_col1, status_col2 = st.columns(2)
-        with status_col1:
-            if has_mappings:
-                st.success(f"✅ Mappings: {len(st.session_state.header_to_var_mapping)} loaded")
-            else:
-                st.error("❌ Mappings: Not loaded")
-        
-        with status_col2:
-            if has_formulas:
-                st.success(f"✅ Formulas: {len(st.session_state.formulas)} loaded")
-            else:
-                st.error("❌ Formulas: Not loaded")
-        
-        if not has_mappings or not has_formulas:
-            st.info("👈 Upload both mappings and formulas above to enable the calculation engine.")
-            return
+        st.warning(f"⚠️ Missing: {', '.join(missing_items)}")
+        st.info("👆 Upload the missing files above to enable the calculation engine.")
+        return
         
         # === TAB 2: UPLOAD FORMULAS ===
-        with tab2:
-            if has_formulas:
-                st.success(f"✅ Formulas already loaded ({len(st.session_state.formulas)} formulas)")
-            else:
-                st.subheader("📥 Import Formulas")
+    with tab2:
+        if has_formulas:
+            st.success(f"✅ Formulas already loaded ({len(st.session_state.formulas)} formulas)")
+            st.info("You can upload new formulas to replace the current ones.")
+        
+        st.markdown("### Import Formulas")
                 
                 col_form1, col_form2 = st.columns(2)
                 
