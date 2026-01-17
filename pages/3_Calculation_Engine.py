@@ -220,27 +220,55 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         print(f"Evaluation error for '{expression}': {str(e)}")
         return None
 
-def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str]) -> Any:
+def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str], is_pre_mapped: bool = False) -> Any:
     """Calculate formula result for a single row"""
     var_values = {}
     
-    # Reverse mapping: variable_name -> excel_header
-    var_to_header = {v: k for k, v in header_to_var_mapping.items()}
-    
-    # Build variable values
-    for var_name, header in var_to_header.items():
-        if header in row.index:
-            var_values[var_name] = row[header]
-        else:
-            # Try case-insensitive match
-            for col in row.index:
-                if col.lower() == header.lower():
-                    var_values[var_name] = row[col]
-                    break
+    if is_pre_mapped:
+        # --- NEW LOGIC: Handle Pre-Mapped Formulas ---
+        # Find all headers referenced in brackets, e.g., [Full Term Premium]
+        # Pattern matches anything inside square brackets
+        pattern = r'\[([^\]]+)\]'
+        matches = re.findall(pattern, formula_expr)
+        
+        for header_name in matches:
+            # Use the header name directly to fetch from the row
+            # Handle case sensitivity loosely
+            value = None
+            if header_name in row.index:
+                value = row[header_name]
+            else:
+                # Try case-insensitive fallback
+                for col in row.index:
+                    if col.lower() == header_name.lower():
+                        value = row[col]
+                        break
+            
+            # Store with the brackets included so safe_eval can replace exact matches
+            # e.g., {'[Full Term Premium]': 5000}
+            if value is not None:
+                var_values[f"[{header_name}]"] = value
+            else:
+                var_values[f"[{header_name}]"] = 0.0 # Default to 0 if missing
+                
+    else:
+        # --- EXISTING LOGIC: Handle Raw Formulas (Variable Mapping) ---
+        # Reverse mapping: variable_name -> excel_header
+        var_to_header = {v: k for k, v in header_to_var_mapping.items()}
+        
+        # Build variable values based on mapping
+        for var_name, header in var_to_header.items():
+            if header in row.index:
+                var_values[var_name] = row[header]
+            else:
+                # Try case-insensitive match
+                for col in row.index:
+                    if col.lower() == header.lower():
+                        var_values[var_name] = row[col]
+                        break
     
     result = safe_eval(formula_expr, var_values)
     return result
-
 def find_matching_column(formula_name: str, df_columns: List[str], header_to_var_mapping: Dict[str, str]) -> str:
     """Find the best matching column for a formula"""
     formula_lower = formula_name.lower().replace('_', '').replace(' ', '')
@@ -292,6 +320,9 @@ def run_calculations(df: pd.DataFrame,
     all_formulas = formulas.copy()
     if include_derived:
         derived = get_derived_formulas()
+        # Ensure derived formulas are marked as NOT pre-mapped
+        for f in derived: 
+            f['is_pre_mapped'] = False
         all_formulas.extend(derived)
         st.info(f"📊 Added {len(derived)} derived formulas to calculation queue")
     
@@ -302,6 +333,9 @@ def run_calculations(df: pd.DataFrame,
     for formula in all_formulas:
         formula_name = formula.get('formula_name', 'Unknown')
         formula_expr = formula.get('formula_expression', '')
+        
+        # --- NEW LOGIC: Check if formula is pre-mapped ---
+        is_pre_mapped = formula.get('is_pre_mapped', False)
         
         # Find matching column
         output_col = find_matching_column(formula_name, df_columns, header_to_var_mapping)
@@ -324,22 +358,33 @@ def run_calculations(df: pd.DataFrame,
         # Debug first row
         if total_rows > 0:
             first_row = result_df.iloc[0]
-            var_to_header = {v: k for k, v in header_to_var_mapping.items()}
-            var_values_debug = {}
-            
-            for var_name, header in var_to_header.items():
-                if header in first_row.index:
-                    var_values_debug[var_name] = first_row[header]
             
             with st.expander(f"🔍 Debug: {formula_name}"):
-                st.write(f"**Available variables:** {len(var_values_debug)}")
+                if is_pre_mapped:
+                    st.write("**Mode:** Pre-Mapped (Direct Header Lookup)")
+                    pattern = r'\[([^\]]+)\]'
+                    headers_in_formula = re.findall(pattern, formula_expr)
+                    st.write(f"**Headers required:** {headers_in_formula}")
+                    
+                    # Show values
+                    for h in headers_in_formula:
+                        val = first_row.get(h, "Not Found")
+                        st.write(f"  - `[{h}]` = {val}")
+                else:
+                    st.write("**Mode:** Variable Mapping")
+                    var_to_header = {v: k for k, v in header_to_var_mapping.items()}
+                    var_values_debug = {}
+                    for var_name, header in var_to_header.items():
+                        if header in first_row.index:
+                            var_values_debug[var_name] = first_row[header]
+                    
+                    st.write(f"**Available variables:** {len(var_values_debug)}")
+                    sample_vars = dict(list(var_values_debug.items())[:5])
+                    for var, val in sample_vars.items():
+                        st.write(f"  - `{var}` = {val}")
                 
-                # Show first 5 variable mappings
-                sample_vars = dict(list(var_values_debug.items())[:5])
-                for var, val in sample_vars.items():
-                    st.write(f"  - `{var}` = {val} (type: {type(val).__name__})")
-                
-                first_result = calculate_row(first_row, formula_expr, header_to_var_mapping)
+                # Test calculation with the flag
+                first_result = calculate_row(first_row, formula_expr, header_to_var_mapping, is_pre_mapped=is_pre_mapped)
                 st.write(f"**Test Result:** {first_result}")
                 
                 if first_result is None:
@@ -353,7 +398,8 @@ def run_calculations(df: pd.DataFrame,
         for idx in range(len(result_df)):
             try:
                 row = result_df.iloc[idx]
-                result = calculate_row(row, formula_expr, header_to_var_mapping)
+                # --- PASS THE FLAG HERE ---
+                result = calculate_row(row, formula_expr, header_to_var_mapping, is_pre_mapped=is_pre_mapped)
                 
                 if result is None:
                     if idx < 5:  # Only log first 5 errors
@@ -419,34 +465,57 @@ def import_mappings_from_json(json_file) -> Dict[str, str]:
         raise ValueError(f"Error reading JSON: {str(e)}")
 
 def import_formulas_from_json(json_file) -> List[Dict]:
-    """Import formulas from JSON file"""
+    """Import formulas from JSON file. Handles both Raw and Pre-Mapped formats."""
     try:
         content = json_file.read()
         data = json.loads(content)
         
+        # Handle container formats
         if isinstance(data, dict) and 'formulas' in data:
             formulas = data['formulas']
-            st.info(f"📊 Extraction format detected")
+            st.info("📊 Extraction format detected")
         elif isinstance(data, list):
             formulas = data
         else:
             raise ValueError("Invalid format")
         
         validated_formulas = []
-        for i, formula in enumerate(formulas):
-            if 'formula_name' not in formula or 'formula_expression' not in formula:
-                continue
+        for formula in formulas:
+            # --- NEW LOGIC: Detect Pre-Mapped Structure ---
+            is_pre_mapped = False
+            final_expression = ""
+            original_expression = ""
             
-            expr = formula['formula_expression'].strip().strip('[]')
+            # Check if it has the mapped expression key
+            if 'mapped_expression' in formula:
+                is_pre_mapped = True
+                final_expression = formula['mapped_expression']
+                # Use 'original_expression' for reference if available, else empty
+                original_expression = formula.get('original_expression', '')
+            else:
+                # Fallback to standard raw format
+                is_pre_mapped = False
+                raw_expr = formula.get('formula_expression', '')
+                final_expression = raw_expr.strip('[]') # Clean up brackets from raw format
+                original_expression = raw_expr
+            
+            if not formula.get('formula_name'):
+                continue
             
             validated_formulas.append({
                 'formula_name': formula['formula_name'],
-                'formula_expression': expr,
+                # We store the expression to be calculated here
+                'formula_expression': final_expression, 
+                # Store original for display
+                'original_expression': original_expression,
+                # FLAG: Tells the engine whether to use variables or direct headers
+                'is_pre_mapped': is_pre_mapped,
                 'description': formula.get('description', ''),
                 'variables_used': formula.get('variables_used', '')
             })
         
         return validated_formulas
+        
     except Exception as e:
         raise ValueError(f"Error reading JSON: {str(e)}")
 
