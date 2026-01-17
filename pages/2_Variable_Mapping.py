@@ -190,16 +190,20 @@ def get_all_master_variables():
     # 1. Static Input Variables
     all_vars.update(INPUT_VARIABLES.keys())
     
-    # 2. Extracted from Main Formulas
-    # extract_variables_from_formulas already handles 'calculation_steps', 
-    # so we don't need to loop through formulas again manually.
+    # 2. Basic Derived Formulas (FIX: Add this block)
+    # We add the keys (the variable names) from the dictionary
+    all_vars.update(BASIC_DERIVED_FORMULAS.keys())
+    
+    # 3. Default Target Output Variables (FIX: Add this block)
+    all_vars.update(DEFAULT_TARGET_OUTPUT_VARIABLES)
+    
+    # 4. Extracted from Main Formulas
     if 'formulas' in st.session_state and st.session_state.formulas:
         formula_vars, derived_defs = extract_variables_from_formulas(st.session_state.formulas)
         all_vars.update(formula_vars)
         all_vars.update(derived_defs.keys())
     
-    # 3. Extracted from Custom Formulas
-    # Same here - just call the helper once.
+    # 5. Extracted from Custom Formulas
     if 'custom_formulas' in st.session_state and st.session_state.custom_formulas:
         cf_vars, cf_derived = extract_variables_from_formulas(st.session_state.custom_formulas)
         all_vars.update(cf_vars)
@@ -363,12 +367,12 @@ class VariableHeaderMatcher:
         
         try:
             # Simple, efficient prompt
-            prompt = f"""Match these Excel headers to variable names. Output ONLY a JSON object.
+            prompt = f"""Match these Excel headers to variable names using syntactic and semantic similarity. Output ONLY a JSON object.
 
     HEADERS: {headers}
 
     VARIABLES: {variables}
-
+    1. Headers such as Surrender Paid Amount should match SURRENDER_V
     Return a JSON object where each key is a header and value is an object with:
     - "variable": best matching variable name or null if no good match
     - "score": confidence 0.0-1.0 (1.0=exact, 0.9=substring, 0.7-0.8=semantic, 0.0=no match)
