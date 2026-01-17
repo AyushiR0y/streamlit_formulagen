@@ -560,102 +560,74 @@ def main():
         st.markdown("### Import Variable Mappings")
         
         col_import1, col_import2 = st.columns(2)
-                
-                with col_import1:
-                    st.markdown("#### Upload JSON Mapping")
-                    st.markdown("**Expected format:** Excel Header → Variable Name")
-                    st.code("""{
-                        "BENEFIT_TERM": "BENEFIT_TERM",
-                        "PREMIUM_TERM": "PREMIUM_TERM",
-                        "FULL_TERM_PREMIUM": "TOTAL_PREMIUM",
-                        "SUM_ASSURED": "SUM_ASSURED",
-                        "GSV": "GSV",
-                        "SSV": "SSV"
-                        }""", language="json")
-                    
-                    uploaded_json = st.file_uploader(
-                        "Upload JSON mapping file",
-                        type=['json'],
-                        key="json_uploader",
-                        help="Upload a JSON file with Excel header to variable name mappings"
-                    )
-                    
-                    if uploaded_json:
-                        try:
-                            imported_mappings = import_mappings_from_json(uploaded_json)
-                            st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from JSON")
-                            
-                            with st.expander("Preview imported mappings"):
-                                st.json(imported_mappings)
-                            
-                            if st.button("✔️ Apply JSON Mappings", type="primary", key="apply_json"):
-                                st.session_state.header_to_var_mapping = imported_mappings
-                                st.success("✅ Mappings applied to session!")
-                                st.rerun()
-                        
-                        except Exception as e:
-                            st.error(f"❌ Error importing JSON: {str(e)}")
-                
-                with col_import2:
-                    st.markdown("#### Upload Excel Mapping")
-                    st.markdown("Excel file should have columns: `Excel_Header` and `Variable_Name`")
-                    
-                    uploaded_excel = st.file_uploader(
-                        "Upload Excel mapping file",
-                        type=['xlsx', 'xls'],
-                        key="excel_mapping_uploader",
-                        help="Upload an Excel file with 'Excel_Header' and 'Variable_Name' columns"
-                    )
-                    
-                    if uploaded_excel:
-                        try:
-                            imported_mappings = import_mappings_from_excel(uploaded_excel)
-                            st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from Excel")
-                            
-                            with st.expander("Preview imported mappings"):
-                                df_preview = pd.DataFrame([
-                                    {"Excel_Header": k, "Variable_Name": v}
-                                    for k, v in imported_mappings.items()
-                                ])
-                                st.dataframe(df_preview, use_container_width=True)
-                            
-                            if st.button("✔️ Apply Excel Mappings", type="primary", key="apply_excel"):
-                                st.session_state.header_to_var_mapping = imported_mappings
-                                st.success("✅ Mappings applied to session!")
-                                st.rerun()
-                        
-                        except Exception as e:
-                            st.error(f"❌ Error importing Excel: {str(e)}")
-    
-    st.markdown("---")
-    
-    # Show current status
-    status_col1, status_col2 = st.columns(2)
-    with status_col1:
-        if has_mappings:
-            st.success(f"✅ Mappings: {len(st.session_state.header_to_var_mapping)} loaded")
-        else:
-            st.error("❌ Mappings: Not loaded")
-    
-    with status_col2:
-        if has_formulas:
-            st.success(f"✅ Formulas: {len(st.session_state.formulas)} loaded")
-        else:
-            st.error("❌ Formulas: Not loaded")
-    
-    # Check if we can proceed
-    if not has_mappings or not has_formulas:
-        missing_items = []
-        if not has_mappings:
-            missing_items.append("Variable Mappings")
-        if not has_formulas:
-            missing_items.append("Formulas")
         
-        st.warning(f"⚠️ Missing: {', '.join(missing_items)}")
-        st.info("👆 Upload the missing files above to enable the calculation engine.")
-        return
+        with col_import1:
+            st.markdown("#### Upload JSON Mapping")
+            st.markdown("**Expected format:** Excel Header → Variable Name")
+            st.code("""{
+    "BENEFIT_TERM": "BENEFIT_TERM",
+    "PREMIUM_TERM": "PREMIUM_TERM",
+    "FULL_TERM_PREMIUM": "TOTAL_PREMIUM",
+    "SUM_ASSURED": "SUM_ASSURED",
+    "GSV": "GSV",
+    "SSV": "SSV"
+}""", language="json")
+            
+            uploaded_json = st.file_uploader(
+                "Upload JSON mapping file",
+                type=['json'],
+                key="json_uploader",
+                help="Upload a JSON file with Excel header to variable name mappings"
+            )
+            
+            if uploaded_json:
+                try:
+                    imported_mappings = import_mappings_from_json(uploaded_json)
+                    st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from JSON")
+                    
+                    with st.expander("Preview imported mappings"):
+                        st.json(imported_mappings)
+                    
+                    if st.button("✔️ Apply JSON Mappings", type="primary", key="apply_json"):
+                        st.session_state.header_to_var_mapping = imported_mappings
+                        st.success("✅ Mappings applied to session!")
+                        st.rerun()
+                
+                except Exception as e:
+                    st.error(f"❌ Error importing JSON: {str(e)}")
         
-        # === TAB 2: UPLOAD FORMULAS ===
+        with col_import2:
+            st.markdown("#### Upload Excel Mapping")
+            st.markdown("Excel file should have columns: `Excel_Header` and `Variable_Name`")
+            
+            uploaded_excel = st.file_uploader(
+                "Upload Excel mapping file",
+                type=['xlsx', 'xls'],
+                key="excel_mapping_uploader",
+                help="Upload an Excel file with 'Excel_Header' and 'Variable_Name' columns"
+            )
+            
+            if uploaded_excel:
+                try:
+                    imported_mappings = import_mappings_from_excel(uploaded_excel)
+                    st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from Excel")
+                    
+                    with st.expander("Preview imported mappings"):
+                        df_preview = pd.DataFrame([
+                            {"Excel_Header": k, "Variable_Name": v}
+                            for k, v in imported_mappings.items()
+                        ])
+                        st.dataframe(df_preview, use_container_width=True)
+                    
+                    if st.button("✔️ Apply Excel Mappings", type="primary", key="apply_excel"):
+                        st.session_state.header_to_var_mapping = imported_mappings
+                        st.success("✅ Mappings applied to session!")
+                        st.rerun()
+                
+                except Exception as e:
+                    st.error(f"❌ Error importing Excel: {str(e)}")
+    
+    # === TAB 2: UPLOAD FORMULAS ===
     with tab2:
         if has_formulas:
             st.success(f"✅ Formulas already loaded ({len(st.session_state.formulas)} formulas)")
@@ -671,21 +643,21 @@ def main():
             
             st.markdown("**Format 1: Direct list**")
             st.code("""[
-                {
-                    "formula_name": "TOTAL_PREMIUM_PAID",
-                    "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
-                }
-                ]""", language="json")
+    {
+        "formula_name": "TOTAL_PREMIUM_PAID",
+        "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
+    }
+]""", language="json")
             
             st.markdown("**Format 2: Extraction output**")
             st.code("""{
-                "formulas": [
-                    {
-                    "formula_name": "TOTAL_PREMIUM_PAID",
-                    "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
-                    }
-                ]
-                }""", language="json")
+    "formulas": [
+        {
+            "formula_name": "TOTAL_PREMIUM_PAID",
+            "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
+        }
+    ]
+}""", language="json")
             
             uploaded_formula_json = st.file_uploader(
                 "Upload JSON formulas file",
@@ -740,76 +712,33 @@ def main():
                 
                 except Exception as e:
                     st.error(f"❌ Error importing Excel: {str(e)}")
+    
+    st.markdown("---")
+    
+    # Show current status
+    status_col1, status_col2 = st.columns(2)
+    with status_col1:
+        if has_mappings:
+            st.success(f"✅ Mappings: {len(st.session_state.header_to_var_mapping)} loaded")
+        else:
+            st.error("❌ Mappings: Not loaded")
+    
+    with status_col2:
+        if has_formulas:
+            st.success(f"✅ Formulas: {len(st.session_state.formulas)} loaded")
+        else:
+            st.error("❌ Formulas: Not loaded")
+    
+    # Check if we can proceed
+    if not has_mappings or not has_formulas:
+        missing_items = []
+        if not has_mappings:
+            missing_items.append("Variable Mappings")
+        if not has_formulas:
+            missing_items.append("Formulas")
         
-        st.markdown("---")
-        st.subheader("📥 Import Variable Mappings")
-        
-        col_import1, col_import2 = st.columns(2)
-        
-        with col_import1:
-            st.markdown("#### Upload JSON Mapping")
-            st.code("""{
-                "Excel_Header_1": "variable_name_1",
-                "Excel_Header_2": "variable_name_2",
-                "Age": "age_var"
-                }""", language="json")
-                            
-            uploaded_json = st.file_uploader(
-                "Upload JSON mapping file",
-                type=['json'],
-                key="json_uploader",
-                help="Upload a JSON file with header-to-variable mappings"
-            )
-            
-            if uploaded_json:
-                try:
-                    imported_mappings = import_mappings_from_json(uploaded_json)
-                    st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from JSON")
-                    
-                    with st.expander("Preview imported mappings"):
-                        st.json(imported_mappings)
-                    
-                    if st.button("✔️ Apply JSON Mappings", type="primary", key="apply_json"):
-                        st.session_state.header_to_var_mapping = imported_mappings
-                        st.success("✅ Mappings applied to session!")
-                        st.rerun()
-                
-                except Exception as e:
-                    st.error(f"❌ Error importing JSON: {str(e)}")
-        
-        with col_import2:
-            st.markdown("#### Upload Excel Mapping")
-            st.markdown("Excel file should have columns: `Excel_Header` and `Variable_Name`")
-            
-            uploaded_excel = st.file_uploader(
-                "Upload Excel mapping file",
-                type=['xlsx', 'xls'],
-                key="excel_mapping_uploader",
-                help="Upload an Excel file with 'Excel_Header' and 'Variable_Name' columns"
-            )
-            
-            if uploaded_excel:
-                try:
-                    imported_mappings = import_mappings_from_excel(uploaded_excel)
-                    st.success(f"✅ Successfully imported {len(imported_mappings)} mappings from Excel")
-                    
-                    with st.expander("Preview imported mappings"):
-                        df_preview = pd.DataFrame([
-                            {"Excel_Header": k, "Variable_Name": v}
-                            for k, v in imported_mappings.items()
-                        ])
-                        st.dataframe(df_preview, use_container_width=True)
-                    
-                    if st.button("✔️ Apply Excel Mappings", type="primary", key="apply_excel"):
-                        st.session_state.header_to_var_mapping = imported_mappings
-                        st.success("✅ Mappings applied to session!")
-                        st.rerun()
-                
-                except Exception as e:
-                    st.error(f"❌ Error importing Excel: {str(e)}")
-        
-        st.markdown("---")
-        st.info("👈 After importing mappings, the calculation engine will become available.")
+        st.warning(f"⚠️ Missing: {', '.join(missing_items)}")
+        st.info("👆 Upload the missing files above to enable the calculation engine.")
         return
     
     # === MAPPING EXPORT SECTION (only shown if mappings exist) ===
@@ -838,9 +767,9 @@ def main():
                 label="📥 Download Excel",
                 data=excel_data,
                 file_name="variable_mappings.xlsx",
-                mime="application/vnd.openxmlformats-officedependent.spreadsheetml.sheet",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 help="Download mappings as Excel file"
-                            )
+            )
     
     # Show current configuration summary
     st.markdown("---")
