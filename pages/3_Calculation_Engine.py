@@ -565,13 +565,13 @@ def main():
                     st.markdown("#### Upload JSON Mapping")
                     st.markdown("**Expected format:** Excel Header → Variable Name")
                     st.code("""{
-  "BENEFIT_TERM": "BENEFIT_TERM",
-  "PREMIUM_TERM": "PREMIUM_TERM",
-  "FULL_TERM_PREMIUM": "TOTAL_PREMIUM",
-  "SUM_ASSURED": "SUM_ASSURED",
-  "GSV": "GSV",
-  "SSV": "SSV"
-}""", language="json")
+                        "BENEFIT_TERM": "BENEFIT_TERM",
+                        "PREMIUM_TERM": "PREMIUM_TERM",
+                        "FULL_TERM_PREMIUM": "TOTAL_PREMIUM",
+                        "SUM_ASSURED": "SUM_ASSURED",
+                        "GSV": "GSV",
+                        "SSV": "SSV"
+                        }""", language="json")
                     
                     uploaded_json = st.file_uploader(
                         "Upload JSON mapping file",
@@ -671,21 +671,21 @@ def main():
             
             st.markdown("**Format 1: Direct list**")
             st.code("""[
-  {
-    "formula_name": "TOTAL_PREMIUM_PAID",
-    "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
-  }
-]""", language="json")
+                {
+                    "formula_name": "TOTAL_PREMIUM_PAID",
+                    "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
+                }
+                ]""", language="json")
             
             st.markdown("**Format 2: Extraction output**")
             st.code("""{
-  "formulas": [
-    {
-      "formula_name": "TOTAL_PREMIUM_PAID",
-      "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
-    }
-  ]
-}""", language="json")
+                "formulas": [
+                    {
+                    "formula_name": "TOTAL_PREMIUM_PAID",
+                    "formula_expression": "TOTAL_PREMIUM * no_of_premium_paid"
+                    }
+                ]
+                }""", language="json")
             
             uploaded_formula_json = st.file_uploader(
                 "Upload JSON formulas file",
@@ -749,11 +749,11 @@ def main():
         with col_import1:
             st.markdown("#### Upload JSON Mapping")
             st.code("""{
-  "Excel_Header_1": "variable_name_1",
-  "Excel_Header_2": "variable_name_2",
-  "Age": "age_var"
-}""", language="json")
-            
+                "Excel_Header_1": "variable_name_1",
+                "Excel_Header_2": "variable_name_2",
+                "Age": "age_var"
+                }""", language="json")
+                            
             uploaded_json = st.file_uploader(
                 "Upload JSON mapping file",
                 type=['json'],
