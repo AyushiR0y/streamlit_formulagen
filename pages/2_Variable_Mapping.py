@@ -1003,6 +1003,37 @@ def main():
             input_vars = set(INPUT_VARIABLES.keys())
             formula_vars, derived_defs = extract_variables_from_formulas(st.session_state.formulas)
             
+            # Create scrollable container with fixed height
+            st.markdown("""
+                <style>
+                .variables-container {
+                    max-height: 400px;
+                    overflow-y: auto;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 5px;
+                    padding: 10px;
+                    background-color: #f9f9f9;
+                }
+                .variables-container::-webkit-scrollbar {
+                    width: 8px;
+                }
+                .variables-container::-webkit-scrollbar-track {
+                    background: #f1f1f1;
+                    border-radius: 10px;
+                }
+                .variables-container::-webkit-scrollbar-thumb {
+                    background: #888;
+                    border-radius: 10px;
+                }
+                .variables-container::-webkit-scrollbar-thumb:hover {
+                    background: #555;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+            
+            # Wrapper div for scrollable content
+            st.markdown('<div class="variables-container">', unsafe_allow_html=True)
+            
             # Header row for the table
             col_vh1, col_vh2, col_vh3 = st.columns([4, 2, 1])
             with col_vh1:
@@ -1027,15 +1058,17 @@ def main():
                 
                 col_v1, col_v2, col_v3 = st.columns([4, 2, 1])
                 with col_v1:
-                    st.text(var)
+                    st.markdown(f'<p style="margin: 0; padding: 5px 0; font-size: 0.9em;">{var}</p>', unsafe_allow_html=True)
                 with col_v2:
-                    st.text(v_type)
+                    st.markdown(f'<p style="margin: 0; padding: 5px 0; font-size: 0.9em;">{v_type}</p>', unsafe_allow_html=True)
                 with col_v3:
                     if st.button("🗑️", key=f"del_var_{var}", help="Remove this variable"):
                         st.session_state.excluded_variables.add(var)
                         st.rerun()
                 
-                st.markdown('<hr style="margin: 0.3rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
+                st.markdown('<hr style="margin: 0.2rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
             
             # Show derived variable formulas
             if derived_defs:
