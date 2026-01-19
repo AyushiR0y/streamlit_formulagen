@@ -1017,10 +1017,7 @@ def main():
 
         result = st.session_state.extraction_result
 
-        col_s1= st.columns(1)
-        with col_s1:
-            st.metric(label="Total Formulas Found", value=len(st.session_state.formulas), help="Number of distinct formulas successfully extracted.")
-
+        
         st.info(result.extraction_summary)
 
         if st.session_state.formulas:
