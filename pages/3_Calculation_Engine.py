@@ -130,6 +130,24 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
     """Safely evaluate a mathematical expression"""
     try:
         eval_expr = expression.strip()
+
+        # 0. Handle Excel-style assignment expressions: "VAR = expr" -> "expr"
+        # Some extracted formulas come as "SSV3_AMT = Income_Benefit_Amount * SSV3_FACTOR"
+        # We only evaluate the RHS.
+        if '=' in eval_expr:
+            # Avoid breaking comparisons (not currently supported anyway), only strip single assignment style.
+            # Take the last '=' to be tolerant of "A = B = C" (use RHS-most).
+            parts = eval_expr.split('=')
+            if len(parts) >= 2:
+                eval_expr = parts[-1].strip()
+
+        # 0b. Handle Excel-style percent literals in expressions, e.g. "105%" or "1.05%"
+        # Convert "105%" -> "(105/100)" so downstream eval works.
+        eval_expr = re.sub(
+            r'(?<![a-zA-Z0-9_])(\d+(?:\.\d+)?)\s*%',
+            r'(\1/100)',
+            eval_expr
+        )
         
         # 1. Handle special date functions BEFORE variable replacement
         if 'MONTHS_BETWEEN' in eval_expr.upper():
@@ -275,6 +293,11 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     potential_vars = potential_vars - python_keywords
     
     # 3. POPULATE var_values with found variables
+    # Build reverse mapping too, because different pages/files sometimes store:
+    #   - header_to_var_mapping as {ExcelHeader: Variable}
+    #   - OR user uploads {Variable: ExcelHeader}
+    # We'll support both by checking both directions.
+    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
     for var_name in potential_vars:
         # A) Check if it's an existing column (e.g. 'policy_year' calculated in step 1)
         if var_name in row.index:
@@ -282,16 +305,23 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             continue
             
         # B) Check if it maps via header_to_var_mapping (Standard Input)
-        if var_name in header_to_var_mapping:
+        mapped_header = None
+        # Case 1: mapping stored as {Variable: ExcelHeader}
+        if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
             mapped_header = header_to_var_mapping[var_name]
+        # Case 2: mapping stored as {ExcelHeader: Variable}
+        elif var_name in var_to_header_mapping:
+            mapped_header = var_to_header_mapping[var_name]
+
+        if mapped_header:
             if mapped_header in row.index:
                 var_values[var_name] = row[mapped_header]
-                continue
-            # Fuzzy check
-            for col in row.index:
-                if col.lower() == mapped_header.lower():
-                    var_values[var_name] = row[col]
-                    break
+            else:
+                # Case-insensitive match against actual df columns
+                for col in row.index:
+                    if col.lower() == str(mapped_header).lower():
+                        var_values[var_name] = row[col]
+                        break
     
     result = safe_eval(formula_expr, var_values)
     return result
