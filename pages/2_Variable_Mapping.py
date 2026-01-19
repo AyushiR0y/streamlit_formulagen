@@ -783,11 +783,7 @@ def main():
                     if st.button("🔗 Start Automatic Mapping", type="primary", key="start_mapping_btn", disabled=st.session_state.initial_mapping_done):
                         # Determine if AI should be used
                         use_ai_mapping = not MOCK_MODE
-                        
-                        if use_ai_mapping:
-                            st.info("🤖 AI-enhanced mapping enabled - using 3-stage process (Lexical → Fuzzy → AI Review)")
-                        else:
-                            st.info("📊 Using lexical and fuzzy matching only (AI not configured)")
+                    
                         
                         with st.spinner("Analyzing headers and matching with variables..."):
                             # 1. CLEAR OLD MAPPINGS
@@ -822,25 +818,7 @@ def main():
                             total = len(mappings)
                             mapped = len([m for m in mappings.values() if m.mapped_header])
                             
-                            # Count by method
-                            method_counts = {}
-                            for m in mappings.values():
-                                if m.mapped_header:
-                                    method = m.matching_method.replace('_', ' ').title()
-                                    method_counts[method] = method_counts.get(method, 0) + 1
                             
-                            st.success(f"✅ Mapped {mapped} out of {total} headers using {len(active_variables)} variables")
-                            
-                            if method_counts:
-                                st.markdown("**Matching Methods Used:**")
-                                method_df = pd.DataFrame([
-                                    {"Method": method, "Count": count}
-                                    for method, count in sorted(method_counts.items(), key=lambda x: -x[1])
-                                ])
-                                st.dataframe(method_df, hide_index=True, use_container_width=True)
-                            
-                            # DON'T rerun here - let user see the debug output
-                            # st.rerun()
 
     
     with col2:
