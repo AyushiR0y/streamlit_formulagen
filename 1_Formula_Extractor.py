@@ -366,8 +366,6 @@ class StableChunkedDocumentFormulaExtractor:
                 input_variables=self.input_variables,
                 basic_derived_formulas=self.basic_derived,
                 extracted_formulas=extracted_formulas,
-                extraction_summary=f"Stable chunked analysis complete. Successfully identified {len(extracted_formulas)} formulas from {len(chunks)} stable chunks using {self.config['chunk_size']} char chunks with {self.config['chunk_overlap']} overlap.",
-                overall_confidence=overall_conf,
             )
             
         except Exception as e:
@@ -399,17 +397,13 @@ class StableChunkedDocumentFormulaExtractor:
             if offline_result:
                 extracted_formulas.append(offline_result)
         
-        overall_conf = (
-            sum(f.confidence for f in extracted_formulas) / len(extracted_formulas) 
-            if extracted_formulas else 0.0
-        )
+        
         
         return DocumentExtractionResult(
             input_variables=self.input_variables,
             basic_derived_formulas=self.basic_derived,
             extracted_formulas=extracted_formulas,
             extraction_summary=f"Offline pattern-based extraction complete. Found {len(extracted_formulas)} formulas using pattern matching (API unavailable).",
-            overall_confidence=overall_conf,
         )
 
     def _create_stable_chunks(self, text: str) -> List[Dict]:
@@ -1023,11 +1017,9 @@ def main():
 
         result = st.session_state.extraction_result
 
-        col_s1, col_s2 = st.columns(2)
+        col_s1= st.columns(1)
         with col_s1:
             st.metric(label="Total Formulas Found", value=len(st.session_state.formulas), help="Number of distinct formulas successfully extracted.")
-        with col_s2:
-            st.metric(label="Overall Confidence", value=f"{result.overall_confidence:.1%}", help="Average confidence score across all extracted formulas.")
 
         st.info(result.extraction_summary)
 
