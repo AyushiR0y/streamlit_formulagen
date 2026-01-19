@@ -1003,72 +1003,37 @@ def main():
             input_vars = set(INPUT_VARIABLES.keys())
             formula_vars, derived_defs = extract_variables_from_formulas(st.session_state.formulas)
             
-            # Create scrollable container with fixed height
-            st.markdown("""
-                <style>
-                .variables-container {
-                    max-height: 400px;
-                    overflow-y: auto;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 5px;
-                    padding: 10px;
-                    background-color: #f9f9f9;
-                }
-                .variables-container::-webkit-scrollbar {
-                    width: 8px;
-                }
-                .variables-container::-webkit-scrollbar-track {
-                    background: #f1f1f1;
-                    border-radius: 10px;
-                }
-                .variables-container::-webkit-scrollbar-thumb {
-                    background: #888;
-                    border-radius: 10px;
-                }
-                .variables-container::-webkit-scrollbar-thumb:hover {
-                    background: #555;
-                }
-                </style>
-            """, unsafe_allow_html=True)
-            
-            # Wrapper div for scrollable content
-            st.markdown('<div class="variables-container">', unsafe_allow_html=True)
-            
-            # Header row for the table
-            col_vh1, col_vh2, col_vh3 = st.columns([4, 2, 1])
-            with col_vh1:
-                st.markdown("**Variable Name**")
-            with col_vh2:
-                st.markdown("**Type**")
-            with col_vh3:
-                st.markdown("**Action**")
-            
-            st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 2px solid #004DA8;">', unsafe_allow_html=True)
-            
-            # Create table with delete buttons
+            var_df_data = []
             for var in sorted(all_variables):
-                if var in st.session_state.excluded_variables:
-                    continue
-                    
-                v_type = "Input"
-                if var in derived_defs:
-                    v_type = "Derived"
-                elif var not in input_vars:
-                    v_type = "Extracted"
-                
-                col_v1, col_v2, col_v3 = st.columns([4, 2, 1])
-                with col_v1:
-                    st.markdown(f'<p style="margin: 0; padding: 5px 0; font-size: 0.9em;">{var}</p>', unsafe_allow_html=True)
-                with col_v2:
-                    st.markdown(f'<p style="margin: 0; padding: 5px 0; font-size: 0.9em;">{v_type}</p>', unsafe_allow_html=True)
-                with col_v3:
-                    if st.button("🗑️", key=f"del_var_{var}", help="Remove this variable"):
-                        st.session_state.excluded_variables.add(var)
-                        st.rerun()
-                
-                st.markdown('<hr style="margin: 0.2rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
+                if var not in st.session_state.excluded_variables:
+                    v_type = "Input"
+                    if var in derived_defs:
+                        v_type = "Derived"
+                    elif var not in input_vars:
+                        v_type = "Extracted"
+                    var_df_data.append({'Variable Name': var, 'Type': v_type, 'Remove': False})
             
-            st.markdown('</div>', unsafe_allow_html=True)
+            var_df = pd.DataFrame(var_df_data)
+            
+            # Display dataframe with checkboxes using data_editor
+            edited_df = st.data_editor(
+                var_df,
+                column_config={
+                    "Variable Name": st.column_config.TextColumn("Variable Name", disabled=True),
+                    "Type": st.column_config.TextColumn("Type", disabled=True),
+                    "Remove": st.column_config.CheckboxColumn("Remove", help="Check to remove this variable")
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="variables_editor"
+            )
+            
+            # Process removals
+            if edited_df['Remove'].any():
+                vars_to_remove = edited_df[edited_df['Remove'] == True]['Variable Name'].tolist()
+                if vars_to_remove:
+                    st.session_state.excluded_variables.update(vars_to_remove)
+                    st.rerun()
             
             # Show derived variable formulas
             if derived_defs:
