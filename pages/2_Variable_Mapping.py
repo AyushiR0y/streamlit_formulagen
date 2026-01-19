@@ -55,61 +55,12 @@ CONFIDENCE_THRESHOLDS = {
     'medium': 0.80,  # Good similarity
     'low': 0.75       # Minimum similarity to accept a match (Raised from 0.40)
 }
-REFERENCE_MAPPING_DICT = {
-    # Premium-related
-    'rop_benefit': 'TOTAL_PREMIUM_PAID',
-    'rop benefit': 'TOTAL_PREMIUM_PAID',
-    'return of premium': 'TOTAL_PREMIUM_PAID',
-    'total premium paid': 'TOTAL_PREMIUM_PAID',
-    'premium paid': 'TOTAL_PREMIUM_PAID',
-    'full term premium': 'FULL_TERM_PREMIUM',
-    'annual premium': 'FULL_TERM_PREMIUM',
-    'yearly premium': 'FULL_TERM_PREMIUM',
-    'total premium': 'TOTAL_PREMIUM_PAID',  # Generic - may need manual review
-    
-    # Surrender values
-    'gsv': 'GSV',
-    'guaranteed surrender value': 'GSV',
-    'ssv': 'SSV',
-    'special surrender value': 'SSV',
-    'ssv1': 'SSV1_AMT',
-    'ssv2': 'SSV2_AMT',
-    'ssv3': 'SSV3_AMT',
-    'surrender paid amount': 'SURRENDER_PAID_AMOUNT',
-    'surrender value paid': 'SURRENDER_PAID_AMOUNT',
-    
-    # Sum assured
-    'sa': 'SUM_ASSURED',
-    'sum assured': 'SUM_ASSURED',
-    'sum assured on death': 'SUM_ASSURED_ON_DEATH',
-    'paid up sa': 'PAID_UP_SA',
-    'paid up sum assured': 'PAID_UP_SA',
-    
-    # Dates
-    'term start date': 'TERM_START_DATE',
-    'policy start date': 'TERM_START_DATE',
-    'commencement date': 'TERM_START_DATE',
-    'fup date': 'FUP_Date',
-    'first unpaid premium date': 'FUP_Date',
-    'surrender date': 'DATE_OF_SURRENDER',
-    'maturity date': 'maturity_date',
-    
-    # Other
-    'entry age': 'ENTRY_AGE',
-    'age at entry': 'ENTRY_AGE',
-    'premium term': 'PREMIUM_TERM',
-    'benefit term': 'BENEFIT_TERM',
-    'policy year': 'policy_year',
-    'fund value': 'FUND_VALUE',
-}
-
-# Updated INPUT_VARIABLES with clear descriptions
+# --- INPUT VARIABLES DEFINITIONS ---
 INPUT_VARIABLES = {
     'TERM_START_DATE': 'Date when the policy starts',
     'FUP_Date': 'First Unpaid Premium date',
     'ENTRY_AGE': 'Age of the policyholder at policy inception',
-    'FULL_TERM_PREMIUM': 'Annual/Yearly Premium Amount (NOT total paid)',
-    'TOTAL_PREMIUM': 'Generic premium field (annual premium amount)',
+    'TOTAL_PREMIUM': 'Annual Premium amount',
     'BOOKING_FREQUENCY': 'Frequency of premium booking (monthly, quarterly, yearly)',
     'PREMIUM_TERM': 'Premium Paying Term - duration for paying premiums',
     'SUM_ASSURED': 'Sum Assured - guaranteed amount on maturity/death',
@@ -129,26 +80,6 @@ INPUT_VARIABLES = {
     'CAPITAL_UNITS_VALUE': 'Number of units in policy fund at surrender or maturity',
 }
 
-# Add these to DEFAULT_TARGET_OUTPUT_VARIABLES (after line 76)
-DEFAULT_TARGET_OUTPUT_VARIABLES = [
-    'TOTAL_PREMIUM_PAID',  # = FULL_TERM_PREMIUM × no_of_premium_paid
-    'FULL_TERM_PREMIUM',   # Annual/Yearly premium amount
-    'TEN_TIMES_AP', 
-    'one_oh_five_percent_total_premium',
-    'SUM_ASSURED_ON_DEATH', 
-    'SUM_ASSURED', 
-    'GSV', 
-    'PAID_UP_SA',
-    'PAID_UP_SA_ON_DEATH', 
-    'paid_up_income_benefit_amount',
-    'SSV1_AMT', 
-    'SSV2_AMT', 
-    'SSV3_AMT', 
-    'SSV', 
-    'SURRENDER_PAID_AMOUNT',
-]
-
-
 BASIC_DERIVED_FORMULAS = {
     'no_of_premium_paid': 'Calculate based on difference between TERM_START_DATE and FUP_Date',
     'policy_year': 'Calculate based on difference between TERM_START_DATE and DATE_OF_SURRENDER + 1',
@@ -159,6 +90,12 @@ BASIC_DERIVED_FORMULAS = {
     'FUND_FACTOR': 'Factor to compute fund value based on premiums and term'
 }
 
+DEFAULT_TARGET_OUTPUT_VARIABLES = [
+    'TOTAL_PREMIUM_PAID', 'TEN_TIMES_AP', 'one_oh_five_percent_total_premium',
+    'SUM_ASSURED_ON_DEATH', 'SUM_ASSURED', 'GSV', 'PAID_UP_SA',
+    'PAID_UP_SA_ON_DEATH', 'paid_up_income_benefit_amount',
+    'SSV1_AMT', 'SSV2_AMT', 'SSV3_AMT', 'SSV', 'SURRENDER_PAID_AMOUNT',
+]
 def extract_variables_from_formulas(formulas: List[Dict]) -> Tuple[Set[str], Dict[str, str]]:
     """Extract all unique variables from formula expressions AND calculation steps
     Returns: (all_variables, derived_variables_mapping)
@@ -253,10 +190,11 @@ def get_all_master_variables():
     # 1. Static Input Variables
     all_vars.update(INPUT_VARIABLES.keys())
     
-    # 2. Basic Derived Formulas
+    # 2. Basic Derived Formulas (FIX: Add this block)
+    # We add the keys (the variable names) from the dictionary
     all_vars.update(BASIC_DERIVED_FORMULAS.keys())
     
-    # 3. Default Target Output Variables
+    # 3. Default Target Output Variables (FIX: Add this block)
     all_vars.update(DEFAULT_TARGET_OUTPUT_VARIABLES)
     
     # 4. Extracted from Main Formulas
@@ -270,10 +208,6 @@ def get_all_master_variables():
         cf_vars, cf_derived = extract_variables_from_formulas(st.session_state.custom_formulas)
         all_vars.update(cf_vars)
         all_vars.update(cf_derived.keys())
-    
-    # 6. Filter out excluded variables
-    if 'excluded_variables' in st.session_state:
-        all_vars = all_vars - st.session_state.excluded_variables
             
     return sorted(list(all_vars))
 
@@ -288,13 +222,11 @@ class VariableMapping:
     def to_dict(self):
         return asdict(self)
 
-
 class VariableHeaderMatcher:
     """Matches formula variables to Excel headers using multiple strategies"""
     
     def __init__(self):
         self.mappings: Dict[str, VariableMapping] = {}
-        self.user_verified_mappings: Dict[str, str] = {}  # Persisted mappings
         
     def normalize_text(self, text: str) -> str:
         """Normalize text for comparison"""
@@ -302,29 +234,6 @@ class VariableHeaderMatcher:
         text = re.sub(r'[^a-z0-9\s]', ' ', text)
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
-    
-    def check_reference_dictionary(self, header: str) -> Optional[str]:
-        """
-        Check if header exists in reference dictionary.
-        Returns matched variable or None.
-        """
-        normalized_header = self.normalize_text(header)
-        
-        # Direct lookup
-        if normalized_header in REFERENCE_MAPPING_DICT:
-            return REFERENCE_MAPPING_DICT[normalized_header]
-        
-        # Partial match (header contains reference key)
-        for ref_key, var_name in REFERENCE_MAPPING_DICT.items():
-            if ref_key in normalized_header or normalized_header in ref_key:
-                return var_name
-        
-        return None
-    
-    def check_user_verified_mappings(self, header: str) -> Optional[str]:
-        """Check if user has previously verified this mapping"""
-        normalized_header = self.normalize_text(header)
-        return self.user_verified_mappings.get(normalized_header)
     
     def expand_abbreviations(self, text: str) -> str:
         """Expand common insurance/financial abbreviations"""
@@ -416,68 +325,73 @@ class VariableHeaderMatcher:
         # Weighted average favoring token-based matching
         score = (ratio * 0.2 + partial_ratio * 0.2 + token_sort_ratio * 0.3 + token_set_ratio * 0.3)
         
-        # Length penalty logic (unchanged from original)
+        # --- IMPROVED LENGTH PENALTY ---
+        # Penalize matches where one string is much shorter than the other
+        # This prevents single letters like "N" from matching everything
+        
         len_var = len(var_expanded)
         len_header = len(header_expanded)
         len_diff = abs(len_var - len_header)
         
+        # Special case: Single character variables should ONLY match single character headers
         if len_var == 1 or len_header == 1:
             if len_var != len_header:
-                score = score * 0.01
+                score = score * 0.01  # 99% penalty
             return score
         
+        # Very short variables (2-3 chars) need exact or very close matches
         if len_var <= 3 or len_header <= 3:
             if len_diff > 2:
-                score = score * 0.1
+                score = score * 0.1  # 90% penalty
             return score
         
+        # General length difference penalties
         if len_diff > 15:
-            score = score * 0.3
+            score = score * 0.3  # 70% penalty
         elif len_diff > 10:
-            score = score * 0.5
+            score = score * 0.5  # 50% penalty
         elif len_diff > 5:
-            score = score * 0.8
+            score = score * 0.8  # 20% penalty
             
         return score
     
+   
+
     def semantic_similarity_ai_batch(self, headers: List[str], variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
-        """Single AI call to match ALL headers to variables"""
+        """
+        Single AI call to match ALL headers to variables.
+        Much more efficient than batching!
+        """
         if MOCK_MODE or not client:
             return {h: ("", 0.0, "AI unavailable") for h in headers}
         
         try:
-            # Enhanced prompt with premium distinction
+            # Simple, efficient prompt
             prompt = f"""Match these Excel headers to variable names using syntactic and semantic similarity. Output ONLY a JSON object.
 
-HEADERS: {headers}
+    HEADERS: {headers}
 
-VARIABLES: {variables}
+    VARIABLES: {variables}
+    1. Headers such as Surrender Paid Amount should match SURRENDER_V
+    Return a JSON object where each key is a header and value is an object with:
+    - "variable": best matching variable name or null if no good match
+    - "score": confidence 0.0-1.0 (1.0=exact, 0.9=substring, 0.7-0.8=semantic, 0.0=no match)
+    - "reason": brief explanation
+    
 
-IMPORTANT DISTINCTIONS:
-1. "FULL_TERM_PREMIUM" = Annual/yearly premium amount (single payment)
-2. "TOTAL_PREMIUM_PAID" = Cumulative amount paid over multiple years
-3. Headers like "ROP_BENEFIT", "Return of Premium" should map to "TOTAL_PREMIUM_PAID"
-4. Headers like "Annual Premium", "Yearly Premium" should map to "FULL_TERM_PREMIUM"
-5. "Surrender Paid Amount" should map to "SURRENDER_PAID_AMOUNT"
+    Example output format:
+    {{
+    "TOTAL_PREMIUM": {{"variable": "TOTAL_PREMIUM", "score": 1.0, "reason": "Exact match"}},
+    "FULL_TERM_PREMIUM": {{"variable": "TOTAL_PREMIUM", "score": 0.85, "reason": "Semantic match"}},
+    "RandomCol": {{"variable": null, "score": 0.0, "reason": "No match"}}
+    }}
 
-Return a JSON object where each key is a header and value is an object with:
-- "variable": best matching variable name or null if no good match
-- "score": confidence 0.0-1.0 (1.0=exact, 0.9=substring, 0.7-0.8=semantic, 0.0=no match)
-- "reason": brief explanation
-
-Example output format:
-{{
-"ROP_BENEFIT": {{"variable": "TOTAL_PREMIUM_PAID", "score": 0.95, "reason": "ROP means return of total premiums paid"}},
-"ANNUAL_PREMIUM": {{"variable": "FULL_TERM_PREMIUM", "score": 0.95, "reason": "Annual premium is yearly amount"}},
-"RandomCol": {{"variable": null, "score": 0.0, "reason": "No match"}}
-}}
-
-Output ONLY valid JSON, no other text."""
+    Output ONLY valid JSON, no other text."""
 
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=3000,
+                max_tokens=3000,  # JSON is compact
                 temperature=0.0
             )
             
@@ -487,10 +401,12 @@ Output ONLY valid JSON, no other text."""
             if response_text.startswith('```'):
                 response_text = re.sub(r'^```json?\s*|\s*```', '', response_text, flags=re.MULTILINE).strip()
             
+            # Parse JSON
             try:
                 mappings_json = json.loads(response_text)
             except json.JSONDecodeError as e:
                 st.error(f"AI returned invalid JSON: {e}")
+                st.code(response_text[:500])
                 return {h: ("", 0.0, "JSON parse error") for h in headers}
             
             # Convert to expected format
@@ -502,6 +418,7 @@ Output ONLY valid JSON, no other text."""
                     score = float(mapping.get('score', 0.0))
                     reason = mapping.get('reason', 'No reason')
                     
+                    # Convert null to empty string
                     if var is None or var == 'null':
                         var = ""
                         score = 0.0
@@ -516,194 +433,133 @@ Output ONLY valid JSON, no other text."""
             st.error(f"AI matching error: {e}")
             return {h: ("", 0.0, f"Error: {str(e)[:50]}") for h in headers}
 
+
+    # FIX 4: Add debug output to the main matching function
     def match_all_with_ai(self, headers: List[str], variables: List[str], use_ai: bool = True) -> Dict[str, VariableMapping]:
         """
-        Enhanced matching with 3-tier strategy:
-        1. Check user-verified mappings (if available)
-        2. Check reference dictionary
-        3. AI/Fuzzy matching
+        Optimized matching with fallback strategy and debugging.
         """
         mappings = {}
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Statistics tracking
-        stats = {
-            'user_verified': 0,
-            'reference_dict': 0,
-            'ai_matched': 0,
-            'fuzzy_matched': 0,
-            'unmatched': 0
-        }
-        
-        # Load user verified mappings if they exist
-        if 'user_verified_mappings' in st.session_state:
-            self.user_verified_mappings = st.session_state.user_verified_mappings
-        
-        status_text.text("Checking verified mappings and reference dictionary...")
-        progress_bar.progress(0.1)
-        
-        # First pass: Check verified mappings and reference dictionary
-        remaining_headers = []
-        for header in headers:
-            # Tier 1: User-verified mappings (highest priority)
-            user_verified = self.check_user_verified_mappings(header)
-            if user_verified:
-                mappings[header] = VariableMapping(
-                    variable_name=header,
-                    mapped_header=user_verified,
-                    confidence_score=1.0,
-                    matching_method="User Verified",
-                    is_verified=True
-                )
-                stats['user_verified'] += 1
-                continue
+        if use_ai and not MOCK_MODE and client:
+            status_text.text("AI semantic matching in progress...")
+            progress_bar.progress(0.3)
             
-            # Tier 2: Reference dictionary
-            ref_match = self.check_reference_dictionary(header)
-            if ref_match:
-                mappings[header] = VariableMapping(
-                    variable_name=header,
-                    mapped_header=ref_match,
-                    confidence_score=0.98,
-                    matching_method="Reference Dictionary",
-                    is_verified=False
-                )
-                stats['reference_dict'] += 1
-                continue
+            # Primary: AI batch matching
+            ai_results = self.semantic_similarity_ai_batch(headers, variables)
+            progress_bar.progress(0.6)
             
-            # If no match, add to remaining for AI/fuzzy processing
-            remaining_headers.append(header)
-        
-        progress_bar.progress(0.3)
-        
-        # Second pass: AI/Fuzzy matching for remaining headers
-        if remaining_headers:
-            if use_ai and not MOCK_MODE and client:
-                status_text.text(f"AI matching {len(remaining_headers)} remaining headers...")
+            # Process AI results with fallback
+            for idx, header in enumerate(headers):
+                ai_variable, ai_score, ai_reason = ai_results.get(header, ("", 0.0, "No AI response"))
                 
-                ai_results = self.semantic_similarity_ai_batch(remaining_headers, variables)
-                progress_bar.progress(0.7)
-                
-                for header in remaining_headers:
-                    ai_variable, ai_score, ai_reason = ai_results.get(header, ("", 0.0, "No AI response"))
-                    
-                    if ai_variable and ai_score >= 0.6:
-                        mappings[header] = VariableMapping(
-                            variable_name=header,
-                            mapped_header=ai_variable,
-                            confidence_score=ai_score,
-                            matching_method=f"AI: {ai_reason[:50]}",
-                            is_verified=False
-                        )
-                        stats['ai_matched'] += 1
-                    else:
-                        # Fallback to fuzzy
-                        best_score = 0.0
-                        best_candidate = None
-                        
-                        for candidate in variables:
-                            fuzzy_score = self.fuzzy_similarity(header, candidate)
-                            if fuzzy_score > best_score:
-                                best_score = fuzzy_score
-                                best_candidate = candidate
-                        
-                        if best_candidate and best_score >= 0.5:
-                            mappings[header] = VariableMapping(
-                                variable_name=header,
-                                mapped_header=best_candidate,
-                                confidence_score=best_score,
-                                matching_method="Fuzzy (AI fallback)",
-                                is_verified=False
-                            )
-                            stats['fuzzy_matched'] += 1
-                        else:
-                            mappings[header] = VariableMapping(
-                                variable_name=header,
-                                mapped_header="",
-                                confidence_score=0.0,
-                                matching_method="No match",
-                                is_verified=False
-                            )
-                            stats['unmatched'] += 1
-            else:
-                # No AI - fuzzy only
-                status_text.text("Using fuzzy matching...")
-                for header in remaining_headers:
+                # Lower threshold for AI since it's more intelligent
+                if ai_variable and ai_score >= 0.6:
+                    mappings[header] = VariableMapping(
+                        variable_name=header,
+                        mapped_header=ai_variable,
+                        confidence_score=ai_score,
+                        matching_method=f"AI: {ai_reason[:50]}",
+                        is_verified=ai_score >= 0.85
+                    )
+                else:
+                    # Fallback to lexical/fuzzy for this specific header
                     best_score = 0.0
                     best_candidate = None
+                    best_method = "no_match"
                     
                     for candidate in variables:
-                        score = self.fuzzy_similarity(header, candidate)
-                        if score > best_score:
-                            best_score = score
+                        # Try lexical
+                        lex_score = self.lexical_similarity(header, candidate)
+                        if lex_score > best_score:
+                            best_score = lex_score
                             best_candidate = candidate
+                            best_method = "lexical"
+                        
+                        # Try fuzzy
+                        fuzzy_score = self.fuzzy_similarity(header, candidate)
+                        if fuzzy_score > best_score:
+                            best_score = fuzzy_score
+                            best_candidate = candidate
+                            best_method = "fuzzy"
                     
                     if best_candidate and best_score >= 0.5:
                         mappings[header] = VariableMapping(
                             variable_name=header,
                             mapped_header=best_candidate,
                             confidence_score=best_score,
-                            matching_method="Fuzzy",
-                            is_verified=False
+                            matching_method=f"{best_method} (AI fallback)",
+                            is_verified=best_score >= 0.8
                         )
-                        stats['fuzzy_matched'] += 1
                     else:
+                        # IMPORTANT: Still create a VariableMapping object with empty mapped_header
                         mappings[header] = VariableMapping(
                             variable_name=header,
-                            mapped_header="",
+                            mapped_header="",  # Empty but present
                             confidence_score=0.0,
-                            matching_method="No match",
+                            matching_method=f"no_match (AI: {ai_reason[:30]})",
                             is_verified=False
                         )
-                        stats['unmatched'] += 1
+                
+                progress_bar.progress((idx + 1) / len(headers))
+            
+            progress_bar.progress(1.0)
+            status_text.text("Matching complete!")
+            time.sleep(0.5)
+            
+        else:
+            # No AI - use lexical/fuzzy only
+            status_text.text("Using lexical/fuzzy matching...")
+            progress_bar.progress(0.5)
+            
+            for i, header in enumerate(headers):
+                best_score = 0.0
+                best_candidate = None
+                best_method = "no_match"
+                
+                for candidate in variables:
+                    combined, method = self.calculate_combined_score(candidate, header)
+                    if combined > best_score:
+                        best_score = combined
+                        best_candidate = candidate
+                        best_method = method
+                
+                if best_candidate and best_score >= 0.5:
+                    mappings[header] = VariableMapping(
+                        variable_name=header,
+                        mapped_header=best_candidate,
+                        confidence_score=best_score,
+                        matching_method=best_method,
+                        is_verified=best_score >= 0.8
+                    )
+                else:
+                    # IMPORTANT: Still create mapping with empty value
+                    mappings[header] = VariableMapping(
+                        variable_name=header,
+                        mapped_header="",
+                        confidence_score=0.0,
+                        matching_method="no_match",
+                        is_verified=False
+                    )
+                
+                progress_bar.progress((i + 1) / len(headers))
+            
+            status_text.text("Matching complete!")
         
-        progress_bar.progress(1.0)
-        status_text.empty()
         progress_bar.empty()
+        status_text.empty()
         
-        # Display statistics
-        st.success(f"✅ Mapping complete! Matched {len(mappings) - stats['unmatched']}/{len(headers)} headers")
-        
-        stats_df = pd.DataFrame([
-            {"Method": "User Verified", "Count": stats['user_verified']},
-            {"Method": "Reference Dictionary", "Count": stats['reference_dict']},
-            {"Method": "AI Semantic", "Count": stats['ai_matched']},
-            {"Method": "Fuzzy Matching", "Count": stats['fuzzy_matched']},
-            {"Method": "Unmatched", "Count": stats['unmatched']},
-        ])
-        
-        st.dataframe(stats_df, hide_index=True, use_container_width=True)
+        # Debug output
+        st.write(f"🔍 Created {len(mappings)} mapping objects")
+        non_empty = len([m for m in mappings.values() if m.mapped_header])
+        st.write(f"✅ {non_empty} have actual mappings")
         
         return mappings
 
-def add_missing_header_as_variable(variable_name: str, description: str = ""):
-    """
-    Add a variable as a header directly when the header is completely missing.
-    This creates a synthetic column in the dataframe.
-    """
-    if 'excel_df' not in st.session_state or st.session_state.excel_df is None:
-        st.error("No Excel file loaded!")
-        return False
     
-    # Add column with None values
-    st.session_state.excel_df[variable_name] = None
-    
-    # Update headers list
-    if variable_name not in st.session_state.excel_headers:
-        st.session_state.excel_headers.append(variable_name)
-    
-    # Auto-map to itself
-    st.session_state.header_to_var_mapping[variable_name] = variable_name
-    
-    # Track as user-added
-    if 'user_added_headers' not in st.session_state:
-        st.session_state.user_added_headers = {}
-    
-    st.session_state.user_added_headers[variable_name] = description
-    
-    return True
     
 def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict[str, str]) -> List[Dict]:
     """
@@ -894,19 +750,37 @@ def main():
                     
                     st.success(f"✅ Successfully loaded {len(df)} rows with {len(headers)} columns")
                     
-                    # --- Start Automatic Mapping Button with Custom Styling ---
+                    
+                    # --- Filter Variables Step ---
                     st.markdown("---")
+                    st.subheader("🛠️ Filter Variables for Mapping")
+                    st.markdown("Deselect variables that are **not** relevant to this specific Excel file.")
                     
+                    # When getting master variables for mapping
+                    all_master_vars = get_all_master_variables()
+
+                    # Filter out single-letter variables unless explicitly selected
+                    # These require manual mapping due to ambiguity
+                    single_letter_vars = ['N', 'M', 'X', 'Y', 'Z']
+                    default_vars = [v for v in all_master_vars if v not in single_letter_vars]
                     
-                    if st.button("🔗 Start Automatic Mapping", 
-                                type="primary", 
-                                key="start_mapping_btn", 
-                                disabled=st.session_state.initial_mapping_done,
-                                help="Click to automatically match Excel headers with formula variables"):
-                        
-                        # Get active variables (excluding deleted ones)
-                        active_variables = get_all_master_variables()
-                        
+                    # Default to selecting all variables if it's a fresh file upload
+                    if st.session_state.selected_variables_for_mapping == [] or \
+                       set(st.session_state.excel_headers) != set(st.session_state.get('last_uploaded_headers', [])):
+                        st.session_state.selected_variables_for_mapping = all_master_vars
+                        st.session_state.last_uploaded_headers = st.session_state.excel_headers
+                    
+                    st.session_state.selected_variables_for_mapping = st.multiselect(
+                        "Select Variables to Map",
+                        options=all_master_vars,
+                        default=st.session_state.selected_variables_for_mapping,
+                        key="variable_filter_multiselect",
+                        help="Variables NOT selected here will be ignored by the automatic mapper."
+                    )
+                    
+                    # Button directly below
+                    st.markdown('<br>', unsafe_allow_html=True)
+                    if st.button("🔗 Start Automatic Mapping", type="primary", key="start_mapping_btn", disabled=st.session_state.initial_mapping_done):
                         # Determine if AI should be used
                         use_ai_mapping = not MOCK_MODE
                         
@@ -919,6 +793,7 @@ def main():
                             # 1. CLEAR OLD MAPPINGS
                             st.session_state.header_to_var_mapping = {}
                             
+                            active_variables = st.session_state.selected_variables_for_mapping
                             matcher = VariableHeaderMatcher()
                             
                             # 2. Map Headers -> Variables (with integrated AI)
@@ -928,16 +803,20 @@ def main():
                                 use_ai=use_ai_mapping
                             )
                             
-                            # 3. Update session state
+                            # 3. Update session state - THIS IS THE FIX
                             new_mapping = {}
                             for header, mapping_obj in mappings.items():
+                                # Only store non-empty mappings
                                 if mapping_obj.mapped_header:
                                     new_mapping[header] = mapping_obj.mapped_header
                                 else:
+                                    # Store empty string for unmapped headers
                                     new_mapping[header] = ""
                             
                             st.session_state.header_to_var_mapping = new_mapping
                             st.session_state.initial_mapping_done = True
+                            
+                            
                             
                             # Show matching statistics
                             total = len(mappings)
@@ -959,15 +838,14 @@ def main():
                                     for method, count in sorted(method_counts.items(), key=lambda x: -x[1])
                                 ])
                                 st.dataframe(method_df, hide_index=True, use_container_width=True)
+                            
+                            # DON'T rerun here - let user see the debug output
+                            # st.rerun()
 
     
     with col2:
         st.subheader("📋 Available Variables")
         st.markdown("Variables available for mapping: **Input**, **Derived**, and **Extracted** from formulas.")
-        
-        # Initialize excluded variables in session state
-        if 'excluded_variables' not in st.session_state:
-            st.session_state.excluded_variables = set()
         
         # Get consolidated variable list
         all_variables = get_all_master_variables()
@@ -979,51 +857,32 @@ def main():
             
             var_df_data = []
             for var in sorted(all_variables):
-                if var not in st.session_state.excluded_variables:
-                    v_type = "Input"
-                    if var in derived_defs:
-                        v_type = "Derived"
-                    elif var not in input_vars:
-                        v_type = "Extracted"
-                    var_df_data.append({'Variable Name': var, 'Type': v_type, 'Remove': False})
+                v_type = "Input"
+                if var in derived_defs:
+                    v_type = "Derived"
+                elif var not in input_vars:
+                    v_type = "Extracted"
+                var_df_data.append({'Variable Name': var, 'Type': v_type})
             
             var_df = pd.DataFrame(var_df_data)
-            
-            # Display dataframe with checkboxes using data_editor
-            edited_df = st.data_editor(
-                var_df,
-                column_config={
-                    "Variable Name": st.column_config.TextColumn("Variable Name", disabled=True),
-                    "Type": st.column_config.TextColumn("Type", disabled=True),
-                    "Remove": st.column_config.CheckboxColumn("Remove", help="Check to remove this variable")
-                },
-                hide_index=True,
-                use_container_width=True,
-                key="variables_editor"
-            )
-            
-            # Process removals
-            if edited_df['Remove'].any():
-                vars_to_remove = edited_df[edited_df['Remove'] == True]['Variable Name'].tolist()
-                if vars_to_remove:
-                    st.session_state.excluded_variables.update(vars_to_remove)
-                    st.rerun()
+            st.dataframe(var_df, use_container_width=True, hide_index=True)
             
             # Show derived variable formulas
             if derived_defs:
                 with st.expander("📐 Derived Variable Definitions", expanded=False):
                     for var, formula in sorted(derived_defs.items()):
-                        if var not in st.session_state.excluded_variables:
-                            st.markdown(f"**`{var}`** = `{formula}`")
+                        st.markdown(f"**`{var}`** = `{formula}`")
         else:
             st.info("No variables detected.")
-    
-        # Make Add Custom Formula expandable and collapsed by default
-        with st.expander("➕ Add Custom Formula", expanded=False):
-            custom_name = st.text_input("Name", placeholder="Custom_Calc", key="cf_name")
-            custom_expr = st.text_input("Expression", placeholder="var1 + var2 * 0.5", key="cf_expr")
-            
-            if st.button("Add Formula", key="add_cf"):
+       
+        st.subheader("➕ Add Custom Formula")
+        
+        custom_name = st.text_input("Name", placeholder="Custom_Calc", key="cf_name")
+        custom_expr = st.text_input("Expression", placeholder="var1 + var2 * 0.5", key="cf_expr")
+        
+        col_cf1, col_cf2 = st.columns([3, 1])
+        with col_cf1:
+            if st.button("Add", key="add_cf"):
                 if custom_name and custom_expr:
                     st.session_state.custom_formulas.append({
                         'formula_name': custom_name,
@@ -1031,19 +890,20 @@ def main():
                     })
                     st.success(f"✅ Added: {custom_name}")
                     st.rerun()
-            
-            if st.session_state.custom_formulas:
-                st.markdown("---")
-                st.caption("**Custom Formulas:**")
-                for idx, cf in enumerate(st.session_state.custom_formulas):
-                    col_a, col_b = st.columns([5, 1])
-                    with col_a:
-                        st.caption(f"`{cf['formula_name']}`")
-                    with col_b:
-                        if st.button("🗑️", key=f"del_cf_{idx}"):
-                            st.session_state.custom_formulas.pop(idx)
-                            st.rerun()
         
+        if st.session_state.custom_formulas:
+            st.caption("**Custom Formulas:**")
+            for idx, cf in enumerate(st.session_state.custom_formulas):
+                col_a, col_b = st.columns([5, 1])
+                with col_a:
+                    st.caption(f"`{cf['formula_name']}`")
+                with col_b:
+                    if st.button("🗑️", key=f"del_cf_{idx}"):
+                        st.session_state.custom_formulas.pop(idx)
+                        st.rerun()
+        # ------------------------------------------------
+                
+    
     # Variable Mapping Section
     if st.session_state.initial_mapping_done:
         st.markdown("---")
@@ -1163,38 +1023,7 @@ def main():
             if st.session_state.removed_headers:
                 st.markdown("**Removed Headers:**")
                 st.write(st.session_state.removed_headers)
-        st.markdown("---")
-        st.subheader("➕ Add Missing Variable as Header")
-        st.markdown("If a required variable doesn't exist in your Excel file, you can add it here. You'll need to populate it later.")
         
-        col_add1, col_add2, col_add3 = st.columns([2, 3, 1])
-        
-        with col_add1:
-            new_header_var = st.selectbox(
-                "Select Variable to Add",
-                options=[""] + [v for v in get_all_master_variables() if v not in st.session_state.excel_headers],
-                key="new_header_variable"
-            )
-        
-        with col_add2:
-            new_header_desc = st.text_input(
-                "Description (optional)",
-                placeholder="e.g., Will be calculated from other fields",
-                key="new_header_desc"
-            )
-        
-        with col_add3:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("➕ Add", key="add_missing_header", disabled=not new_header_var):
-                if add_missing_header_as_variable(new_header_var, new_header_desc):
-                    st.success(f"✅ Added '{new_header_var}' as a new column")
-                    st.rerun()
-        
-        # Show user-added headers
-        if 'user_added_headers' in st.session_state and st.session_state.user_added_headers:
-            with st.expander("📋 User-Added Headers", expanded=False):
-                for var, desc in st.session_state.user_added_headers.items():
-                    st.markdown(f"**`{var}`**: {desc or '(no description)'}")
         # Summary statistics
         st.markdown("---")
         col_stat1, col_stat2, col_stat3 = st.columns(3)
@@ -1217,25 +1046,15 @@ def main():
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1]) # Changed to 3 columns for JSON and CSV
         
         with col_btn1:
-            if st.button("✅ Confirm & Save Mappings", type="primary", key="confirm_mappings_btn"):
+            if st.button("✅ Confirm Mappings", type="primary", key="confirm_mappings_btn"):
                 # Check for unmapped active headers
                 unmapped = [h for h in active_headers if not st.session_state.header_to_var_mapping.get(h)]
                 
                 if unmapped:
                     st.warning(f"⚠️ {len(unmapped)} headers are unmapped: {', '.join(unmapped[:5])}{'...' if len(unmapped) > 5 else ''}")
                 
-                # Save verified mappings for future use
-                if 'user_verified_mappings' not in st.session_state:
-                    st.session_state.user_verified_mappings = {}
-                
-                # Store normalized mappings
-                for header, var in st.session_state.header_to_var_mapping.items():
-                    if var:  # Only save non-empty mappings
-                        normalized_header = header.lower().strip()
-                        st.session_state.user_verified_mappings[normalized_header] = var
-                
                 st.session_state.mapping_complete = True
-                st.success(f"✅ Mappings confirmed and saved! {len(st.session_state.user_verified_mappings)} verified mappings stored.")
+                st.success("✅ Mappings confirmed!")
                 st.rerun()
         
         with col_btn2:
