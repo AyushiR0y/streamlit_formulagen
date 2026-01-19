@@ -897,36 +897,6 @@ def main():
                     # --- Start Automatic Mapping Button with Custom Styling ---
                     st.markdown("---")
                     
-                    # Custom CSS for light green button with gradient hover
-                    st.markdown("""
-                        <style>
-                        /* Target the specific button by its container */
-                        button[key="start_mapping_btn"] {
-                            background: #90EE90 !important;
-                            color: white !important;
-                            font-weight: 600 !important;
-                            border: none !important;
-                            transition: all 0.3s ease !important;
-                        }
-                        
-                        button[key="start_mapping_btn"]:hover:not(:disabled) {
-                            background: linear-gradient(135deg, #004DA8 0%, #0066CC 100%) !important;
-                            transform: translateY(-2px) !important;
-                            box-shadow: 0 6px 20px rgba(0, 77, 168, 0.4) !important;
-                        }
-                        
-                        button[key="start_mapping_btn"]:disabled {
-                            background: #cccccc !important;
-                            cursor: not-allowed !important;
-                            opacity: 0.6 !important;
-                        }
-                        
-                        /* Alternative: target by testing the button text */
-                        button:has(p:contains("Start Automatic Mapping")) {
-                            background: #90EE90 !important;
-                        }
-                        </style>
-                    """, unsafe_allow_html=True)
                     
                     if st.button("🔗 Start Automatic Mapping", 
                                 type="primary", 
