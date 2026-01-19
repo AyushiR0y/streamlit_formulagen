@@ -253,11 +253,10 @@ def get_all_master_variables():
     # 1. Static Input Variables
     all_vars.update(INPUT_VARIABLES.keys())
     
-    # 2. Basic Derived Formulas (FIX: Add this block)
-    # We add the keys (the variable names) from the dictionary
+    # 2. Basic Derived Formulas
     all_vars.update(BASIC_DERIVED_FORMULAS.keys())
     
-    # 3. Default Target Output Variables (FIX: Add this block)
+    # 3. Default Target Output Variables
     all_vars.update(DEFAULT_TARGET_OUTPUT_VARIABLES)
     
     # 4. Extracted from Main Formulas
@@ -271,6 +270,10 @@ def get_all_master_variables():
         cf_vars, cf_derived = extract_variables_from_formulas(st.session_state.custom_formulas)
         all_vars.update(cf_vars)
         all_vars.update(cf_derived.keys())
+    
+    # 6. Filter out excluded variables
+    if 'excluded_variables' in st.session_state:
+        all_vars = all_vars - st.session_state.excluded_variables
             
     return sorted(list(all_vars))
 
@@ -891,37 +894,42 @@ def main():
                     
                     st.success(f"✅ Successfully loaded {len(df)} rows with {len(headers)} columns")
                     
-                    
-                    # --- Filter Variables Step ---
+                    # --- Start Automatic Mapping Button with Custom Styling ---
                     st.markdown("---")
-                    st.subheader("🛠️ Filter Variables for Mapping")
-                    st.markdown("Deselect variables that are **not** relevant to this specific Excel file.")
                     
-                    # When getting master variables for mapping
-                    all_master_vars = get_all_master_variables()
-
-                    # Filter out single-letter variables unless explicitly selected
-                    # These require manual mapping due to ambiguity
-                    single_letter_vars = ['N', 'M', 'X', 'Y', 'Z']
-                    default_vars = [v for v in all_master_vars if v not in single_letter_vars]
+                    # Custom CSS for light green button with gradient hover
+                    st.markdown("""
+                        <style>
+                        div[data-testid="column"] button[kind="primary"] {
+                            background: linear-gradient(135deg, #90EE90 0%, #90EE90 100%) !important;
+                            color: white !important;
+                            font-weight: 600 !important;
+                            border: none !important;
+                            transition: all 0.3s ease !important;
+                        }
+                        
+                        div[data-testid="column"] button[kind="primary"]:hover:not(:disabled) {
+                            background: linear-gradient(135deg, #004DA8 0%, #0066CC 100%) !important;
+                            transform: translateY(-2px) !important;
+                            box-shadow: 0 6px 20px rgba(0, 77, 168, 0.4) !important;
+                        }
+                        
+                        div[data-testid="column"] button[kind="primary"]:disabled {
+                            background: #cccccc !important;
+                            cursor: not-allowed !important;
+                        }
+                        </style>
+                    """, unsafe_allow_html=True)
                     
-                    # Default to selecting all variables if it's a fresh file upload
-                    if st.session_state.selected_variables_for_mapping == [] or \
-                       set(st.session_state.excel_headers) != set(st.session_state.get('last_uploaded_headers', [])):
-                        st.session_state.selected_variables_for_mapping = all_master_vars
-                        st.session_state.last_uploaded_headers = st.session_state.excel_headers
-                    
-                    st.session_state.selected_variables_for_mapping = st.multiselect(
-                        "Select Variables to Map",
-                        options=all_master_vars,
-                        default=st.session_state.selected_variables_for_mapping,
-                        key="variable_filter_multiselect",
-                        help="Variables NOT selected here will be ignored by the automatic mapper."
-                    )
-                    
-                    # Button directly below
-                    st.markdown('<br>', unsafe_allow_html=True)
-                    if st.button("🔗 Start Automatic Mapping", type="primary", key="start_mapping_btn", disabled=st.session_state.initial_mapping_done):
+                    if st.button("🔗 Start Automatic Mapping", 
+                                type="primary", 
+                                key="start_mapping_btn", 
+                                disabled=st.session_state.initial_mapping_done,
+                                help="Click to automatically match Excel headers with formula variables"):
+                        
+                        # Get active variables (excluding deleted ones)
+                        active_variables = get_all_master_variables()
+                        
                         # Determine if AI should be used
                         use_ai_mapping = not MOCK_MODE
                         
@@ -934,7 +942,6 @@ def main():
                             # 1. CLEAR OLD MAPPINGS
                             st.session_state.header_to_var_mapping = {}
                             
-                            active_variables = st.session_state.selected_variables_for_mapping
                             matcher = VariableHeaderMatcher()
                             
                             # 2. Map Headers -> Variables (with integrated AI)
@@ -944,20 +951,16 @@ def main():
                                 use_ai=use_ai_mapping
                             )
                             
-                            # 3. Update session state - THIS IS THE FIX
+                            # 3. Update session state
                             new_mapping = {}
                             for header, mapping_obj in mappings.items():
-                                # Only store non-empty mappings
                                 if mapping_obj.mapped_header:
                                     new_mapping[header] = mapping_obj.mapped_header
                                 else:
-                                    # Store empty string for unmapped headers
                                     new_mapping[header] = ""
                             
                             st.session_state.header_to_var_mapping = new_mapping
                             st.session_state.initial_mapping_done = True
-                            
-                            
                             
                             # Show matching statistics
                             total = len(mappings)
@@ -988,6 +991,10 @@ def main():
         st.subheader("📋 Available Variables")
         st.markdown("Variables available for mapping: **Input**, **Derived**, and **Extracted** from formulas.")
         
+        # Initialize excluded variables in session state
+        if 'excluded_variables' not in st.session_state:
+            st.session_state.excluded_variables = set()
+        
         # Get consolidated variable list
         all_variables = get_all_master_variables()
         
@@ -996,34 +1003,55 @@ def main():
             input_vars = set(INPUT_VARIABLES.keys())
             formula_vars, derived_defs = extract_variables_from_formulas(st.session_state.formulas)
             
-            var_df_data = []
+            # Header row for the table
+            col_vh1, col_vh2, col_vh3 = st.columns([4, 2, 1])
+            with col_vh1:
+                st.markdown("**Variable Name**")
+            with col_vh2:
+                st.markdown("**Type**")
+            with col_vh3:
+                st.markdown("**Action**")
+            
+            st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 2px solid #004DA8;">', unsafe_allow_html=True)
+            
+            # Create table with delete buttons
             for var in sorted(all_variables):
+                if var in st.session_state.excluded_variables:
+                    continue
+                    
                 v_type = "Input"
                 if var in derived_defs:
                     v_type = "Derived"
                 elif var not in input_vars:
                     v_type = "Extracted"
-                var_df_data.append({'Variable Name': var, 'Type': v_type})
-            
-            var_df = pd.DataFrame(var_df_data)
-            st.dataframe(var_df, use_container_width=True, hide_index=True)
+                
+                col_v1, col_v2, col_v3 = st.columns([4, 2, 1])
+                with col_v1:
+                    st.text(var)
+                with col_v2:
+                    st.text(v_type)
+                with col_v3:
+                    if st.button("🗑️", key=f"del_var_{var}", help="Remove this variable"):
+                        st.session_state.excluded_variables.add(var)
+                        st.rerun()
+                
+                st.markdown('<hr style="margin: 0.3rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
             
             # Show derived variable formulas
             if derived_defs:
                 with st.expander("📐 Derived Variable Definitions", expanded=False):
                     for var, formula in sorted(derived_defs.items()):
-                        st.markdown(f"**`{var}`** = `{formula}`")
+                        if var not in st.session_state.excluded_variables:
+                            st.markdown(f"**`{var}`** = `{formula}`")
         else:
             st.info("No variables detected.")
-       
-        st.subheader("➕ Add Custom Formula")
-        
-        custom_name = st.text_input("Name", placeholder="Custom_Calc", key="cf_name")
-        custom_expr = st.text_input("Expression", placeholder="var1 + var2 * 0.5", key="cf_expr")
-        
-        col_cf1, col_cf2 = st.columns([3, 1])
-        with col_cf1:
-            if st.button("Add", key="add_cf"):
+    
+        # Make Add Custom Formula expandable and collapsed by default
+        with st.expander("➕ Add Custom Formula", expanded=False):
+            custom_name = st.text_input("Name", placeholder="Custom_Calc", key="cf_name")
+            custom_expr = st.text_input("Expression", placeholder="var1 + var2 * 0.5", key="cf_expr")
+            
+            if st.button("Add Formula", key="add_cf"):
                 if custom_name and custom_expr:
                     st.session_state.custom_formulas.append({
                         'formula_name': custom_name,
@@ -1031,20 +1059,19 @@ def main():
                     })
                     st.success(f"✅ Added: {custom_name}")
                     st.rerun()
+            
+            if st.session_state.custom_formulas:
+                st.markdown("---")
+                st.caption("**Custom Formulas:**")
+                for idx, cf in enumerate(st.session_state.custom_formulas):
+                    col_a, col_b = st.columns([5, 1])
+                    with col_a:
+                        st.caption(f"`{cf['formula_name']}`")
+                    with col_b:
+                        if st.button("🗑️", key=f"del_cf_{idx}"):
+                            st.session_state.custom_formulas.pop(idx)
+                            st.rerun()
         
-        if st.session_state.custom_formulas:
-            st.caption("**Custom Formulas:**")
-            for idx, cf in enumerate(st.session_state.custom_formulas):
-                col_a, col_b = st.columns([5, 1])
-                with col_a:
-                    st.caption(f"`{cf['formula_name']}`")
-                with col_b:
-                    if st.button("🗑️", key=f"del_cf_{idx}"):
-                        st.session_state.custom_formulas.pop(idx)
-                        st.rerun()
-        # ------------------------------------------------
-                
-    
     # Variable Mapping Section
     if st.session_state.initial_mapping_done:
         st.markdown("---")
