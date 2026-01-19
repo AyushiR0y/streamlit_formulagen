@@ -65,7 +65,7 @@ REFERENCE_MAPPING_DICT = {
     'full term premium': 'FULL_TERM_PREMIUM',
     'annual premium': 'FULL_TERM_PREMIUM',
     'yearly premium': 'FULL_TERM_PREMIUM',
-    'total premium': 'TOTAL_PREMIUM',  # Generic - may need manual review
+    'total premium': 'TOTAL_PREMIUM_PAID',  # Generic - may need manual review
     
     # Surrender values
     'gsv': 'GSV',
@@ -900,23 +900,30 @@ def main():
                     # Custom CSS for light green button with gradient hover
                     st.markdown("""
                         <style>
-                        div[data-testid="column"] button[kind="primary"] {
-                            background: linear-gradient(135deg, #90EE90 0%, #90EE90 100%) !important;
+                        /* Target the specific button by its container */
+                        button[key="start_mapping_btn"] {
+                            background: #90EE90 !important;
                             color: white !important;
                             font-weight: 600 !important;
                             border: none !important;
                             transition: all 0.3s ease !important;
                         }
                         
-                        div[data-testid="column"] button[kind="primary"]:hover:not(:disabled) {
+                        button[key="start_mapping_btn"]:hover:not(:disabled) {
                             background: linear-gradient(135deg, #004DA8 0%, #0066CC 100%) !important;
                             transform: translateY(-2px) !important;
                             box-shadow: 0 6px 20px rgba(0, 77, 168, 0.4) !important;
                         }
                         
-                        div[data-testid="column"] button[kind="primary"]:disabled {
+                        button[key="start_mapping_btn"]:disabled {
                             background: #cccccc !important;
                             cursor: not-allowed !important;
+                            opacity: 0.6 !important;
+                        }
+                        
+                        /* Alternative: target by testing the button text */
+                        button:has(p:contains("Start Automatic Mapping")) {
+                            background: #90EE90 !important;
                         }
                         </style>
                     """, unsafe_allow_html=True)
@@ -982,9 +989,6 @@ def main():
                                     for method, count in sorted(method_counts.items(), key=lambda x: -x[1])
                                 ])
                                 st.dataframe(method_df, hide_index=True, use_container_width=True)
-                            
-                            # DON'T rerun here - let user see the debug output
-                            # st.rerun()
 
     
     with col2:
