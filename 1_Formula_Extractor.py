@@ -567,13 +567,14 @@ class StableChunkedDocumentFormulaExtractor:
     - Make a reasonable inference based on similar formulas
     - Use industry-standard calculations as fallback
     - Provide a placeholder formula with low confidence
-    - Example: If no formula found, you could return "{formula_name}" with confidence 0.3
+    - Example: If no formula found, you could return "{formula_name}"
     7. Pay close attention to formulas involving:
     - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
     - Exponential terms like (1/1.05)^N
     - Conditions like policy term > 3 years
     - Capital Units references
     - ON_DEATH is an important qualifier
+    - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
 
     Examples:
     - If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
