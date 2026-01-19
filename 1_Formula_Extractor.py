@@ -133,7 +133,6 @@ class ExtractedFormula:
     formula_expression: str
     variants_info: str
     business_context: str
-    confidence: float
     source_method: str
     document_evidence: str
     specific_variables: Dict[str, str]
@@ -146,8 +145,7 @@ class DocumentExtractionResult:
     input_variables: Dict[str, str]
     basic_derived_formulas: Dict[str, str]
     extracted_formulas: List[ExtractedFormula]
-    extraction_summary: str
-    overall_confidence: float
+    
 
     def to_dict(self):
         return asdict(self)
@@ -190,15 +188,13 @@ def extract_formulas_cached(
                 'formula_expression': f.formula_expression,
                 'variants_info': f.variants_info,
                 'business_context': f.business_context,
-                'confidence': f.confidence,
                 'source_method': f.source_method,
                 'document_evidence': f.document_evidence,
                 'specific_variables': f.specific_variables
             }
             for f in result.extracted_formulas
         ],
-        'extraction_summary': result.extraction_summary,
-        'overall_confidence': result.overall_confidence
+        
     }
 class StableChunkedDocumentFormulaExtractor:
     """Extracts formulas from large documents using stable chunking ratios"""
@@ -271,7 +267,6 @@ class StableChunkedDocumentFormulaExtractor:
                                 formula_expression=formula_expr.strip(),
                                 variants_info="Extracted using offline pattern matching",
                                 business_context=f"Offline extraction for {formula_name}",
-                                confidence=0.3,  # Lower confidence for offline extraction
                                 source_method='offline_pattern_matching',
                                 document_evidence=sentence[:200] + "..." if len(sentence) > 200 else sentence,
                                 specific_variables={var: self.input_variables[var] for var in variables_found}
@@ -356,10 +351,7 @@ class StableChunkedDocumentFormulaExtractor:
 
             progress_bar.progress(100)
             
-            overall_conf = (
-                sum(f.confidence for f in extracted_formulas) / len(extracted_formulas) 
-                if extracted_formulas else 0.0
-            )
+            
 
 
             return DocumentExtractionResult(
@@ -596,9 +588,8 @@ class StableChunkedDocumentFormulaExtractor:
     VARIABLES_USED: [comma-separated list of variables from available list]
     DOCUMENT_EVIDENCE: [exact text from document supporting this formula, or "INFERRED" if not explicit]
     BUSINESS_CONTEXT: [brief explanation of what this formula calculates]
-    CONFIDENCE_LEVEL: [number between 0.1 and 1.0 - use lower values for inferred formulas]
 
-    Respond with only the requested format. If you cannot find explicit documentation, make a reasonable inference and set confidence accordingly.
+    Respond with only the requested format. If you cannot find explicit documentation, make a reasonable inference.
     """
         
         for model in models_to_try:
@@ -668,16 +659,13 @@ class StableChunkedDocumentFormulaExtractor:
             context_match = re.search(r'BUSINESS_CONTEXT:\s*(.+?)(?=\nCONFIDENCE_LEVEL|$)', response_text, re.DOTALL | re.IGNORECASE)
             business_context = context_match.group(1).strip() if context_match else f"Calculation for {formula_name}"
             
-            # Extract confidence level
-            confidence_match = re.search(r'CONFIDENCE_LEVEL:\s*([0-9]*\.?[0-9]+)', response_text, re.IGNORECASE)
-            confidence = float(confidence_match.group(1)) if confidence_match else 0.4
+        
             
             return ExtractedFormula(
                 formula_name=formula_name.upper(),
                 formula_expression=formula_expression,
                 variants_info="Extracted using stable chunking approach",
                 business_context=business_context,
-                confidence=min(confidence, 1.0),  # Cap at 1.0
                 source_method='stable_chunked_extraction',
                 document_evidence=document_evidence[:500],  # Limit evidence length
                 specific_variables=specific_variables
@@ -716,7 +704,6 @@ class StableChunkedDocumentFormulaExtractor:
             basic_derived_formulas=self.basic_derived,
             extracted_formulas=[],
             extraction_summary="Cannot extract formulas from document. A valid `OPENAI_API_KEY` is required to enable stable chunked document analysis and formula extraction.",
-            overall_confidence=0.0,
         )
 
 
@@ -947,7 +934,6 @@ def main():
                                                 formula_expression=f['formula_expression'],
                                                 variants_info=f['variants_info'],
                                                 business_context=f['business_context'],
-                                                confidence=f['confidence'],
                                                 source_method=f['source_method'],
                                                 document_evidence=f['document_evidence'],
                                                 specific_variables=f['specific_variables']
@@ -959,8 +945,7 @@ def main():
                                             input_variables=result_dict['input_variables'],
                                             basic_derived_formulas=result_dict['basic_derived_formulas'],
                                             extracted_formulas=extracted_formulas,
-                                            extraction_summary=result_dict['extraction_summary'],
-                                            overall_confidence=result_dict['overall_confidence']
+                                            
                                         )
                                         
                                     except:
@@ -1160,7 +1145,6 @@ def main():
             export_data = {
                 "extraction_summary": result.extraction_summary,
                 "total_formulas": len(st.session_state.formulas),
-                "overall_confidence": result.overall_confidence,
                 "formulas": st.session_state.formulas
             }
 
