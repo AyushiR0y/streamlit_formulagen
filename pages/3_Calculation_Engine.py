@@ -36,8 +36,8 @@ class CalculationResult:
 BASIC_DERIVED_FORMULAS = {
     'no_of_premium_paid': {
         'description': 'Number of premiums paid based on term start and FUP date',
-        # FIX: Corrected argument order - FUP_Date should be AFTER TERM_START_DATE
-        'formula': 'MONTHS_BETWEEN(TERM_START_DATE, FUP_Date) / 12', 
+        # Swapped arguments to ensure positive duration usually, or rely on abs logic below
+        'formula': 'MONTHS_BETWEEN(TERM_START_DATE, FUP_Date)', 
         'variables': ['FUP_Date', 'TERM_START_DATE']
     },
     'policy_year': {
@@ -66,7 +66,7 @@ def get_derived_formulas() -> List[Dict]:
             'formula_expression': info['formula'],
             'description': info['description'],
             'variables_used': ', '.join(info['variables']),
-            'is_pre_mapped': False
+            'is_pre_mapped': False # Derived formulas use variables, not direct headers
         })
     return formulas
 
@@ -101,10 +101,7 @@ def safe_convert_to_number(value: Any) -> float:
     return 0.0
 
 def months_between(date1, date2):
-    """
-    Calculate months between two dates.
-    FIX: REMOVED abs() to preserve sign - date2 should be AFTER date1 for positive result
-    """
+    """Calculate absolute months between two dates"""
     try:
         if pd.isna(date1) or pd.isna(date2):
             return 0
@@ -112,11 +109,10 @@ def months_between(date1, date2):
         d1 = pd.to_datetime(date1)
         d2 = pd.to_datetime(date2)
         
-        # Calculate difference maintaining sign (d2 - d1)
-        months = (d2.year - d1.year) * 12 + (d2.month - d1.month)
+        # Calculate absolute difference to prevent negative results if args swapped
+        months = abs((d2.year - d1.year) * 12 + (d2.month - d1.month))
         return float(months)
-    except Exception as e:
-        st.warning(f"Date calculation error: {e} | date1={date1}, date2={date2}")
+    except:
         return 0
 
 def add_months(date, months):
@@ -138,40 +134,39 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         # 1. Handle special date functions BEFORE variable replacement
         if 'MONTHS_BETWEEN' in eval_expr.upper():
             pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
-            matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
-            # Process in reverse to avoid index shifting
-            for match in reversed(matches):
+            matches = re.finditer(pattern, eval_expr, re.IGNORECASE)
+            for match in matches:
                 var1, var2 = match.group(1).strip(), match.group(2).strip()
+                # These might be variables or direct values
                 val1 = variables.get(var1, var1)
                 val2 = variables.get(var2, var2)
                 result = months_between(val1, val2)
-                eval_expr = eval_expr[:match.start()] + str(result) + eval_expr[match.end():]
+                eval_expr = eval_expr.replace(match.group(0), str(result))
         
         if 'ADD_MONTHS' in eval_expr.upper():
             pattern = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
-            matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
-            for match in reversed(matches):
+            matches = re.finditer(pattern, eval_expr, re.IGNORECASE)
+            for match in matches:
                 var1, var2 = match.group(1).strip(), match.group(2).strip()
                 val1 = variables.get(var1, var1)
-                
-                # Evaluate var2 expression if needed
-                var2_eval = var2
-                for var_name in sorted(variables.keys(), key=len, reverse=True):
-                    var2_eval = re.sub(r'\b' + re.escape(var_name) + r'\b', 
-                                      str(safe_convert_to_number(variables[var_name])), 
-                                      var2_eval, flags=re.IGNORECASE)
-                
+                # Evaluate var2 if it's an expression
                 try:
-                    val2_float = eval(var2_eval, {"__builtins__": {}}, {})
+                    # Check if var2 is a number or needs eval
+                    if any(op in var2 for op in ['+', '-', '*', '/']):
+                         # Use the variables dict to resolve sub-expressions if possible
+                         # But safe here to just try converting to number first
+                         val2_float = float(re.sub(r'[^0-9\.\-\+*/eE]', '', str(var2)))
+                    else:
+                        val2_float = float(var2)
                 except:
-                    val2_float = safe_convert_to_number(var2)
+                    val2_float = 0
                 
                 result = add_months(val1, val2_float)
                 
                 if result:
-                    return result
+                    return result # ADD_MONTHS usually returns a date, returning immediately
                 else:
-                    eval_expr = eval_expr[:match.start()] + '0' + eval_expr[match.end():]
+                    eval_expr = eval_expr.replace(match.group(0), '0')
         
         if 'CURRENT_DATE' in eval_expr.upper():
             current_date = datetime.now()
@@ -192,16 +187,21 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         for pattern, replacement in func_mappings.items():
             eval_expr = re.sub(pattern, replacement, eval_expr, flags=re.IGNORECASE)
         
-        # 3. Replace variables (sorted by length to avoid partial replacements)
+        # 3. Replace variables
+        # Sort by length (descending) to avoid partial replacements (e.g., "TOTAL_PREM" before "PREM")
+        # We assume keys in 'variables' are exact matches needed in the formula (with or without brackets)
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
         
         for var_name in sorted_vars:
             value = variables[var_name]
             numeric_value = safe_convert_to_number(value)
             
+            # Handle bracketed keys specifically for regex safety, or use raw match
             if var_name.startswith('[') and var_name.endswith(']'):
+                # Exact string replacement for brackets
                 eval_expr = eval_expr.replace(var_name, str(numeric_value))
             else:
+                # Word boundary for standard variables
                 pattern = r'\b' + re.escape(var_name) + r'\b'
                 eval_expr = re.sub(pattern, str(numeric_value), eval_expr, flags=re.IGNORECASE)
         
@@ -219,69 +219,75 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             return None
     
     except Exception as e:
-        st.warning(f"Evaluation error: {e} | Expression: {expression}")
+        print(f"Evaluation error: {e} | Expr: {expression}")
         return None
 
 def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str], is_pre_mapped: bool = False) -> Any:
     """
     Calculate formula result for a single row.
-    FIX: Improved variable resolution order
+    HYBRID LOGIC: Handles [Bracketed Headers], Existing Columns (results from previous formulas), and Standard Variables.
     """
     var_values = {}
     
-    # 1. Extract Bracketed Headers for Pre-Mapped formulas
+    # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
+    bracketed_headers = set()
     if is_pre_mapped:
         pattern = r'\[([^\]]+)\]'
         matches = re.findall(pattern, formula_expr)
+        bracketed_headers.update(matches)
         
-        for header_name in matches:
+        # Populate var_values with bracketed headers
+        for header_name in bracketed_headers:
+            # Lookup in row (case insensitive)
             val = None
+            # Try exact first
             if header_name in row.index:
                 val = row[header_name]
             else:
+                # Try case insensitive
                 for col in row.index:
                     if col.lower() == header_name.lower():
                         val = row[col]
                         break
             
+            # Store with brackets included to ensure safe_eval replaces the exact token
             if val is not None:
                 var_values[f"[{header_name}]"] = val
             else:
+                # If missing, treat as 0 or None? 0 might mask errors, but keeps calculation running
                 var_values[f"[{header_name}]"] = 0.0
+
+    # 2. IDENTIFY Potential Variables (Non-bracketed tokens)
+    # We will check against:
+    #   a) Existing Columns in the DataFrame (e.g. results of derived formulas run previously)
+    #   b) The header_to_var_mapping (for standard inputs)
     
-    # 2. Extract potential variables from formula
-    clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
+    # Remove bracketed parts temporarily to find other tokens
+    # Simple tokenization: remove known functions and brackets
+    clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr) # Remove headers
     clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     
     potential_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
+    
+    # Filter out Python keywords/funcs
     python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float'}
     potential_vars = potential_vars - python_keywords
     
-    # 3. Populate variables - FIX: Check existing columns FIRST
+    # 3. POPULATE var_values with found variables
     for var_name in potential_vars:
-        # Priority 1: Existing column in row (case-sensitive)
+        # A) Check if it's an existing column (e.g. 'policy_year' calculated in step 1)
         if var_name in row.index:
             var_values[var_name] = row[var_name]
             continue
-        
-        # Priority 2: Case-insensitive column match
-        found = False
-        for col in row.index:
-            if col.lower() == var_name.lower():
-                var_values[var_name] = row[col]
-                found = True
-                break
-        if found:
-            continue
-        
-        # Priority 3: Header-to-variable mapping
+            
+        # B) Check if it maps via header_to_var_mapping (Standard Input)
         if var_name in header_to_var_mapping:
             mapped_header = header_to_var_mapping[var_name]
             if mapped_header in row.index:
                 var_values[var_name] = row[mapped_header]
                 continue
-            # Case-insensitive fallback
+            # Fuzzy check
             for col in row.index:
                 if col.lower() == mapped_header.lower():
                     var_values[var_name] = row[col]
@@ -290,10 +296,13 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     result = safe_eval(formula_expr, var_values)
     return result
 
-def find_matching_column(formula_name: str, df_columns: List[str], header_to_var_mapping: Dict[str, str], existing_data_columns: List[str]) -> str:
+def find_matching_column(formula_name: str, df_columns: List[str], header_to_var_mapping: Dict[str, str]) -> str:
     """
     Find the best matching column for a formula.
-    FIX: Added existing_data_columns to prevent overwriting original data
+    UPDATED: 
+    1. Prioritize Exact Column Name Match (Autofill).
+    2. Prioritize Partial Match (Fuzzy).
+    3. REMOVED 'var_to_header' lookup which was causing Policy Status to be overwritten.
     """
     formula_lower = formula_name.lower().replace('_', '').replace(' ', '')
     
@@ -301,28 +310,22 @@ def find_matching_column(formula_name: str, df_columns: List[str], header_to_var
     for col in df_columns:
         col_clean = col.lower().replace('_', '').replace(' ', '')
         if col_clean == formula_lower:
-            # FIX: Only return if it's NOT an original data column
-            if col not in existing_data_columns:
-                return col
-            # If it IS original data, let it fall through to create new column
+            return col
     
-    # 2. Check partial match (but skip original columns)
+    # 2. Check partial match (Formula Name contained in Column Name)
+    # This ensures "TOTAL_PREMIUM_PAID" matches "Total Premium Paid" column
     for col in df_columns:
-        if col in existing_data_columns:
-            continue
         col_lower = col.lower()
         fname_lower = formula_name.lower()
         if fname_lower in col_lower or col_lower in fname_lower:
             return col
     
-    # 3. Token matching (skip original columns)
+    # 3. Token matching (Last resort)
     formula_tokens = set(re.findall(r'\w+', formula_name.lower()))
     best_match = None
     best_score = 0
     
     for col in df_columns:
-        if col in existing_data_columns:
-            continue
         col_tokens = set(re.findall(r'\w+', col.lower()))
         overlap = len(formula_tokens & col_tokens)
         if overlap > best_score:
@@ -332,7 +335,7 @@ def find_matching_column(formula_name: str, df_columns: List[str], header_to_var
     if best_match and best_score > 0:
         return best_match
     
-    # 4. Create new column
+    # 4. No match found -> Return formula name (Create New Column)
     return formula_name
 
 def run_calculations(df: pd.DataFrame, 
@@ -343,13 +346,11 @@ def run_calculations(df: pd.DataFrame,
     result_df = df.copy()
     calculation_results = []
     
-    # FIX: Track original data columns to prevent overwriting
-    original_columns = df.columns.tolist()
-    
     # Add derived formulas if requested
     all_formulas = formulas.copy()
     if include_derived:
         derived = get_derived_formulas()
+        # Ensure derived formulas are NOT marked as pre-mapped
         for f in derived: 
             f['is_pre_mapped'] = False
         all_formulas.extend(derived)
@@ -357,30 +358,23 @@ def run_calculations(df: pd.DataFrame,
     
     st.info(f"🔧 Processing {len(all_formulas)} total formulas")
     
-    df_columns = result_df.columns.tolist()
+    df_columns = df.columns.tolist()
     
     for formula in all_formulas:
         formula_name = formula.get('formula_name', 'Unknown')
         formula_expr = formula.get('formula_expression', '')
         is_pre_mapped = formula.get('is_pre_mapped', False)
         
-        # FIX: Pass original_columns to prevent overwriting
-        output_col = find_matching_column(formula_name, df_columns, header_to_var_mapping, original_columns)
+        # Find matching column
+        output_col = find_matching_column(formula_name, df_columns, header_to_var_mapping)
         
         col_existed = output_col in result_df.columns
-        is_original = output_col in original_columns
-        
-        # FIX: Warn if trying to overwrite original column
-        if is_original:
-            st.warning(f"⚠️ **{formula_name}** would overwrite original column **{output_col}**. Creating new column **{formula_name}_calc** instead.")
-            output_col = f"{formula_name}_calc"
-            col_existed = False
         
         if not col_existed:
             result_df[output_col] = np.nan
             st.info(f"📝 **{formula_name}** → Creating new column: **{output_col}**")
         else:
-            st.info(f"✏️ **{formula_name}** → Updating existing: **{output_col}**")
+            st.info(f"✏️ **{formula_name}** → Writing to existing: **{output_col}**")
         
         st.code(f"Expression: {formula_expr}", language="python")
         
@@ -395,32 +389,25 @@ def run_calculations(df: pd.DataFrame,
             with st.expander(f"🔍 Debug: {formula_name}"):
                 if is_pre_mapped:
                     st.write("**Mode:** Pre-Mapped (Direct Header Lookup)")
+                    # Show parsed headers
                     pattern = r'\[([^\]]+)\]'
                     headers_in_formula = re.findall(pattern, formula_expr)
                     st.write(f"**Headers in brackets:** {headers_in_formula}")
                     
+                    # Show values
                     for h in headers_in_formula:
                         val = first_row.get(h, "Not Found")
                         st.write(f"  - `[{h}]` = {val}")
                 else:
-                    st.write("**Mode:** Variable Mapping")
-                    vars_used = formula.get('variables_used', 'Unknown').split(', ')
-                    st.write(f"**Variables:** {vars_used}")
-                    
-                    # Show what each variable maps to
-                    for var in vars_used:
-                        if var in header_to_var_mapping:
-                            header = header_to_var_mapping[var]
-                            val = first_row.get(header, "Not Found")
-                            st.write(f"  - `{var}` → `{header}` = {val}")
-                        elif var in first_row.index:
-                            st.write(f"  - `{var}` (direct) = {first_row[var]}")
+                    st.write("**Mode:** Variable Mapping / Hybrid")
+                    var_to_header = {v: k for k, v in header_to_var_mapping.items()}
+                    st.write(f"**Variables used:** {formula.get('variables_used', 'Unknown')}")
                 
                 first_result = calculate_row(first_row, formula_expr, header_to_var_mapping, is_pre_mapped=is_pre_mapped)
                 st.write(f"**Test Result:** {first_result}")
                 
                 if first_result is None:
-                    st.error("⚠️ Test calculation returned None - check formula and variable mapping")
+                    st.error("⚠️ Test calculation returned None - check formula, headers, and variables")
         
         # Progress tracking
         progress_bar = st.progress(0)
@@ -496,11 +483,12 @@ def import_mappings_from_json(json_file) -> Dict[str, str]:
         raise ValueError(f"Error reading JSON: {str(e)}")
 
 def import_formulas_from_json(json_file) -> List[Dict]:
-    """Import formulas from JSON file"""
+    """Import formulas from JSON file. Handles both Raw and Pre-Mapped formats."""
     try:
         content = json_file.read()
         data = json.loads(content)
         
+        # Handle container formats
         if isinstance(data, dict) and 'formulas' in data:
             formulas = data['formulas']
             st.info("📊 Extraction format detected")
@@ -511,6 +499,7 @@ def import_formulas_from_json(json_file) -> List[Dict]:
         
         validated_formulas = []
         for formula in formulas:
+            # Detect Pre-Mapped Structure
             is_pre_mapped = False
             final_expression = ""
             original_expression = ""
@@ -721,6 +710,7 @@ def main():
         col1, col2 = st.columns(2)
         
         with col1:
+            # FIX: Generate fresh BytesIO every time to ensure file exists on download
             @st.cache_data
             def convert_df(df):
                 return df.to_csv(index=False).encode('utf-8')
@@ -734,6 +724,7 @@ def main():
             )
         
         with col2:
+            # FIX: Generate Excel bytes fresh
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 st.session_state.results_df.to_excel(writer, index=False)
