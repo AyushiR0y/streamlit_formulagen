@@ -1003,8 +1003,6 @@ def main():
         result = st.session_state.extraction_result
 
         
-        st.info(result.extraction_summary)
-
         if st.session_state.formulas:
             st.subheader("Formula Overview")
             st.markdown("Review and edit the extracted formulas. You can modify expressions, delete formulas, or add new ones.")
@@ -1143,7 +1141,6 @@ def main():
 
             # Create export data from current session state (user-edited formulas)
             export_data = {
-                "extraction_summary": result.extraction_summary,
                 "total_formulas": len(st.session_state.formulas),
                 "formulas": st.session_state.formulas
             }
