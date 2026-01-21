@@ -92,7 +92,7 @@ BASIC_DERIVED_FORMULAS = {
 
 DEFAULT_TARGET_OUTPUT_VARIABLES = [
     'TOTAL_PREMIUM_PAID', 'TEN_TIMES_AP', 'one_oh_five_percent_total_premium',
-    'SUM_ASSURED_ON_DEATH', 'SUM_ASSURED', 'GSV', 'PAID_UP_SA',
+    'SUM_ASSURED_ON_DEATH', 'GSV', 'PAID_UP_SA',
     'PAID_UP_SA_ON_DEATH', 'paid_up_income_benefit_amount',
     'SSV1_AMT', 'SSV2_AMT', 'SSV3_AMT', 'SSV', 'SURRENDER_PAID_AMOUNT',
 ]
