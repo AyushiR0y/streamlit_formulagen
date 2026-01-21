@@ -84,8 +84,6 @@ BASIC_DERIVED_FORMULAS = {
     'no_of_premium_paid': 'Calculate based on difference between TERM_START_DATE and FUP_Date',
     'policy_year': 'Calculate based on difference between TERM_START_DATE and DATE_OF_SURRENDER + 1',
     'maturity_date': 'TERM_START_DATE + (BENEFIT_TERM* 12) months',
-    'Final_surrender_value_paid': 'Final surrender value paid',
-    'Elapsed_policy_duration': 'How many years have passed since policy start',
     'CAPITAL_FUND_VALUE': 'Total policy fund value including bonuses',
     'FUND_FACTOR': 'Factor to compute fund value based on premiums and term'
 }
@@ -573,8 +571,6 @@ def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict
     # Create reverse mapping: variable -> header
     var_to_header = {var: header for header, var in header_to_var_mapping.items() if var}
     
-    # Debug
-    st.write(f"🔍 Applying {len(var_to_header)} mappings to formulas")
     
     for formula in formulas:
         expr = formula.get('formula_expression', '')
@@ -585,12 +581,7 @@ def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict
             # Use word boundaries to avoid partial replacements
             pattern = r'\b' + re.escape(var_name) + r'\b'
             expr = re.sub(pattern, f'[{excel_header}]', expr)
-        
-        # Debug if changed
-        if expr != original_expr:
-            st.write(f"✅ Mapped: {formula.get('formula_name')}")
-            st.write(f"   Before: {original_expr[:100]}")
-            st.write(f"   After: {expr[:100]}")
+    
         
         mapped_formulas.append({
             'formula_name': formula.get('formula_name', ''),
@@ -1063,26 +1054,45 @@ def main():
     if st.session_state.mapping_complete:
         st.markdown("---")
         st.subheader("📐 Formulas with Mapped Headers")
-        st.markdown("Variables in formulas have been replaced by mapped Excel headers (shown in brackets).")
         
-        # Pass the header->var mapping to the apply function
+        # 1. Get the mapped formulas
         mapped_formulas = apply_mappings_to_formulas(
             st.session_state.formulas,
             st.session_state.header_to_var_mapping
         )
         
-        for formula in mapped_formulas:
-            with st.expander(f"**{formula['formula_name']}**", expanded=True):
-                col_f1, col_f2 = st.columns(2)
-                
-                with col_f1:
-                    st.markdown("**Original Expression:**")
-                    st.code(formula['original_expression'], language="python")
-                
-                with col_f2:
-                    st.markdown("**Mapped Expression:**")
-                    st.code(formula['mapped_expression'], language="python")
+        # 2. Convert to DataFrame for the table
+        df_formulas = pd.DataFrame(mapped_formulas)
+
+        # 3. Display as an editable table
+        edited_df = st.data_editor(
+            df_formulas,
+            column_config={
+                "formula_name": st.column_config.TextColumn(
+                    "Formula Name", 
+                    disabled=True,  # Prevent editing the name
+                    width="medium"
+                ),
+                "original_expression": st.column_config.TextColumn(
+                    "Original Expression", 
+                    disabled=True,  # Prevent editing the source
+                    width="large"
+                ),
+                "mapped_expression": st.column_config.TextColumn(
+                    "Mapped Expression", 
+                    width="large",
+                    help="Edit the formula here. Changes are saved automatically."
+                ),
+            },
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed"  # Prevents adding/deleting rows, only editing cells
+        )
         
+        # 4. Save the edited data back to session state (Optional)
+        # This converts the DataFrame back to a list of dicts
+        st.session_state.edited_formulas = edited_df.to_dict(orient="records")
+            
         # Export mapped formulas
         st.markdown("---")
         col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 1])
