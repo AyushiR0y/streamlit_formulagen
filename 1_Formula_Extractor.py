@@ -119,9 +119,9 @@ DEFAULT_TARGET_OUTPUT_VARIABLES = [
     'PAID_UP_SA',
     'PAID_UP_SA_ON_DEATH',
     'paid_up_income_benefit_amount',
-    'SSV1_AMT',
-    'SSV2_AMT',
-    'SSV3_AMT',
+    'SSV1',
+    'SSV2',
+    'SSV3',
     'SSV',
     'SURRENDER_PAID_AMOUNT',
 ]
