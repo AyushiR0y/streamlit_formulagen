@@ -532,6 +532,17 @@ def get_smart_default_value(var_name: str):
     
     # ROP (Return of Premium) variables
     if 'ROP' in var_upper:
+        return 50000.0
+    
+    # Default numeric value
+    return 1000.0
+    
+    # Term variables
+    if 'TERM' in var_upper:
+        return 10
+    
+    # ROP (Return of Premium) variables
+    if 'ROP' in var_upper:
         return 200000.0
     
     # Default numeric
@@ -582,6 +593,9 @@ def test_formulas_interface():
                     elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
                         input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
                     else:
+                        # Ensure numeric default for number_input
+                        if isinstance(default_value, date):
+                            default_value = default_value.year  # Convert date to numeric
                         input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
             
             # Plain variables from formulas
@@ -610,20 +624,37 @@ def test_formulas_interface():
             # Add derived formula inputs
             for var in formula_vars['derived']:
                 if var in input_values:
-                    if 'DATE' in var:
-                        test_row_data[var] = pd.to_datetime(input_values[var])
+                    if 'DATE' in var.upper():
+                        if isinstance(input_values[var], date):
+                            test_row_data[var] = pd.to_datetime(input_values[var])
+                        else:
+                            test_row_data[var] = input_values[var]
                     else:
                         test_row_data[var] = input_values[var]
             
             # Add bracketed formula inputs (remove brackets for internal use)
             for var in formula_vars['bracketed']:
                 clean_var = var  # Keep original for mapping
-                test_row_data[clean_var] = input_values[var]
+                if var in input_values:
+                    if 'DATE' in var.upper():
+                        if isinstance(input_values[var], date):
+                            test_row_data[clean_var] = pd.to_datetime(input_values[var])
+                        else:
+                            test_row_data[clean_var] = input_values[var]
+                    else:
+                        test_row_data[clean_var] = input_values[var]
             
             # Add plain formula inputs
             for var in formula_vars['plain']:
                 if var not in test_row_data:
-                    test_row_data[var] = input_values[var]
+                    if var in input_values:
+                        if 'DATE' in var.upper():
+                            if isinstance(input_values[var], date):
+                                test_row_data[var] = pd.to_datetime(input_values[var])
+                            else:
+                                test_row_data[var] = input_values[var]
+                        else:
+                            test_row_data[var] = input_values[var]
             
             # Create pandas Series from collected data
             test_row = pd.Series(test_row_data)
