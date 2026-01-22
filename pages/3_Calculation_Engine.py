@@ -259,8 +259,6 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
 
     # 2. IDENTIFY Potential Variables (Non-bracketed tokens)
     clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
-    clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
-    clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     
     potential_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
     
