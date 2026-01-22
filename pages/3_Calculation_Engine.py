@@ -454,6 +454,123 @@ def run_calculations(df: pd.DataFrame,
     
     return result_df, calculation_results
 
+# --- NEW: Test Formula Functionality ---
+def test_formulas_interface():
+    """Create an interface to test formulas with manual inputs"""
+    st.markdown("### 🧪 Formula Testing Interface")
+    st.markdown("Test your formulas and derived calculations before running on full dataset")
+    
+    with st.expander("🔧 Test Single Formula", expanded=True):
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.markdown("#### Input Values")
+            # Input fields for derived formula variables
+            st.markdown("**Derived Formula Variables:**")
+            
+            # Date inputs for derived formulas
+            term_start_date = st.date_input("TERM_START_DATE", value=date(2020, 1, 1))
+            fup_date = st.date_input("FUP_Date", value=date(2023, 6, 15))
+            surrender_date = st.date_input("DATE_OF_SURRENDER", value=date(2023, 6, 15))
+            benefit_term = st.number_input("BENEFIT_TERM (years)", value=10, min_value=1)
+            
+            st.markdown("**Formula Variables:**")
+            # Input fields for your formula variables
+            full_term_premium = st.number_input("FULL_TERM_PREMIUM", value=50000.0, min_value=0.0)
+            sum_assured = st.number_input("SUM_ASSURED", value=500000.0, min_value=0.0)
+            gsv_factor = st.number_input("GSV2_FACTOR", value=0.3, min_value=0.0, max_value=1.0)
+            premium_term = st.number_input("PREMIUM_TERM", value=10, min_value=1)
+            income_benefit_amount = st.number_input("Income_Benefit_Amount", value=10000.0, min_value=0.0)
+            rop_benefit = st.number_input("ROP_Benefit", value=200000.0, min_value=0.0)
+            sv_factor = st.number_input("SV_FACTOR", value=0.5, min_value=0.0, max_value=1.0)
+            ssv2_factor = st.number_input("SSV2_FACTOR", value=0.4, min_value=0.0, max_value=1.0)
+            ssv3_factor = st.number_input("SSV3_FACTOR", value=0.2, min_value=0.0, max_value=1.0)
+            
+        with col2:
+            st.markdown("#### Test Results")
+            
+            # Create test data row
+            test_row = pd.Series({
+                'TERM_START_DATE': pd.to_datetime(term_start_date),
+                'FUP_Date': pd.to_datetime(fup_date),
+                'DATE_OF_SURRENDER': pd.to_datetime(surrender_date),
+                'BENEFIT_TERM': benefit_term,
+                'FULL_TERM_PREMIUM': full_term_premium,
+                'SUM_ASSURED': sum_assured,
+                'GSV2_FACTOR': gsv_factor,
+                'PREMIUM_TERM': premium_term,
+                'Income_Benefit_Amount': income_benefit_amount,
+                'ROP_Benefit': rop_benefit,
+                'SV_FACTOR': sv_factor,
+                'SSV2_FACTOR': ssv2_factor,
+                'SSV3_FACTOR': ssv3_factor
+            })
+            
+            # Test derived formulas first
+            st.markdown("**Derived Formulas Results:**")
+            derived_results = {}
+            
+            for formula_name, formula_info in BASIC_DERIVED_FORMULAS.items():
+                result = calculate_row(test_row, formula_info['formula'], {}, is_pre_mapped=False)
+                derived_results[formula_name] = result
+                
+                col_success, col_result = st.columns([3, 1])
+                with col_success:
+                    if result is not None and result != 0:
+                        st.success(f"✅ {formula_name}: {result}")
+                    else:
+                        st.warning(f"⚠️ {formula_name}: {result} (Check inputs)")
+                with col_result:
+                    if st.button("Debug", key=f"debug_derived_{formula_name}"):
+                        st.json({
+                            'formula': formula_info['formula'],
+                            'inputs': {
+                                'TERM_START_DATE': str(term_start_date),
+                                'FUP_Date': str(fup_date),
+                                'DATE_OF_SURRENDER': str(surrender_date),
+                                'BENEFIT_TERM': benefit_term
+                            },
+                            'calculated_months': months_between(term_start_date, fup_date)
+                        })
+            
+            # Add derived results to test row for formula testing
+            for key, value in derived_results.items():
+                test_row[key] = value
+            
+            st.markdown("---")
+            st.markdown("**Your Formulas Results:**")
+            
+            # Test your formulas
+            if 'formulas' in st.session_state and st.session_state.formulas:
+                for formula in st.session_state.formulas:
+                    formula_name = formula.get('formula_name', 'Unknown')
+                    formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
+                    
+                    if formula_expr:
+                        try:
+                            result = calculate_row(test_row, formula_expr, {}, is_pre_mapped=True)
+                            
+                            col_success, col_result = st.columns([3, 1])
+                            with col_success:
+                                if result is not None:
+                                    if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
+                                        st.success(f"✅ {formula_name}: {result:,.2f}")
+                                    else:
+                                        st.success(f"✅ {formula_name}: {result}")
+                                else:
+                                    st.error(f"❌ {formula_name}: Failed to calculate")
+                            with col_result:
+                                if st.button("Debug", key=f"debug_formula_{formula_name}"):
+                                    st.json({
+                                        'formula': formula_expr,
+                                        'inputs': {col: test_row[col] for col in test_row.index if col in formula_expr},
+                                        'result': result
+                                    })
+                        except Exception as e:
+                            st.error(f"❌ {formula_name}: {str(e)}")
+            else:
+                st.info("No formulas loaded. Upload formulas JSON to test them.")
+
 # --- Import Functions ---
 def import_mappings_from_json(json_file) -> Dict[str, str]:
     """Import mappings from JSON file"""
@@ -537,6 +654,11 @@ def main():
             </div>
         </div>
     """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Add test interface at the top
+    test_formulas_interface()
     
     st.markdown("---")
     
@@ -636,139 +758,6 @@ def main():
                 st.code(info['formula'])
     
     st.markdown("---")
-    ## SINGLE ROW TEST CALCULATOR (FIXED - SAFE VERSION)
-    st.markdown("---")
-    st.subheader("🧪 Single Row Test Calculator")
-
-    # SAFETY CHECK - Skip if no formulas loaded
-    if 'formulas' not in st.session_state or not st.session_state.formulas:
-        st.warning("⚠️ Upload formulas JSON first to enable Single Row Tester")
-    else:
-        st.info("🔍 Auto-detects all variables from derived formulas + JSON formulas")
-
-        try:
-            # DYNAMICALLY extract all unique variables needed
-            all_variables = set()
-
-            # 1. Add derived formula variables
-            for formula_info in BASIC_DERIVED_FORMULAS.values():
-                all_variables.update(formula_info['variables'])
-
-            # 2. Add JSON formula variables (extract from original_expression)
-            for formula in st.session_state.formulas:
-                orig_expr = formula.get('original_expression', '')
-                # Extract words that look like variables
-                vars_in_expr = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', orig_expr)
-                # Filter out functions/numbers
-                filtered_vars = [v for v in vars_in_expr 
-                            if (not v.replace('.','').replace('%','').replace(',','').isdigit()) 
-                            and v.lower() not in {'max', 'min', 'sum', 'abs', 'round', 'power'}]
-                all_variables.update(filtered_vars)
-
-            all_variables = sorted(list(all_variables))
-            
-            if not all_variables:
-                st.warning("No variables detected")
-            else:
-                st.caption(f"📋 Auto-detected {len(all_variables)} variables")
-
-                # Dynamic test data input
-                st.markdown("### 📝 Input Values")
-                test_data = {}
-
-                # Smart categorization
-                date_vars = [v for v in ['TERM_START_DATE', 'FUP_Date', 'DATE_OF_SURRENDER', 'CURRENT_DATE'] if v in all_variables]
-                number_vars = [v for v in all_variables if v not in date_vars]
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.markdown("#### 📅 Dates")
-                    for var in date_vars:
-                        default_date = date(2020, 1, 1) if 'START' in var else date(2025, 1, 1)
-                        test_data[var] = st.date_input(var, value=default_date, key=f"date_test_{var}")
-
-                with col2:
-                    st.markdown("#### 🔢 Numbers") 
-                    shown_count = 0
-                    for var in number_vars:
-                        if shown_count < 15:  # Limit inputs to avoid clutter
-                            default_val = {
-                                'PREMIUM': 12000.0,
-                                'SUM_ASSURED': 1000000.0, 
-                                'TERM': 10.0,
-                                'FACTOR': 0.8
-                            }.get(next((k for k in default_val.keys() if k in var), None), 0.8)
-                            
-                            test_data[var] = st.number_input(
-                                var, value=default_val, 
-                                key=f"num_test_{var}", 
-                                format="%.2f"
-                            )
-                            shown_count += 1
-
-                # Create test row
-                test_row = pd.Series(test_data)
-
-                # Dynamic mapping (safe subset)
-                test_mapping = {}
-                if 'header_to_var_mapping' in st.session_state:
-                    test_mapping = {k: v for k, v in st.session_state.header_to_var_mapping.items() 
-                                if k in test_data.keys()}
-
-                if st.button("🧮 Calculate Single Row", type="secondary", use_container_width=True):
-                    with st.spinner("Calculating test row..."):
-                        try:
-                            # Create test DF
-                            test_df = pd.DataFrame([test_row])
-                            
-                            col1, col2 = st.columns(2)
-                            
-                            with col1:
-                                st.markdown("### 1️⃣ Derived Formulas")
-                                derived_df, derived_results = run_calculations(
-                                    test_df.copy(), [], test_mapping, include_derived=True
-                                )
-                                
-                                # Key derived metrics
-                                key_derived = {r.formula_name.split(' → ')[-1]: derived_df[r.formula_name.split(' → ')[-1]].iloc[0] 
-                                            for r in derived_results}
-                                st.metric("no_of_premium_paid", f"{key_derived.get('no_of_premium_paid', 0):.2f}")
-
-                            with col2:
-                                st.markdown("### 2️⃣ JSON Formulas") 
-                                full_test_df, formula_results = run_calculations(
-                                    derived_df, st.session_state.formulas, st.session_state.header_to_var_mapping, 
-                                    include_derived=False
-                                )
-                                
-                                # Key JSON results
-                                if formula_results:
-                                    first_result = formula_results[0]
-                                    col_name = first_result.formula_name.split(' → ')[-1]
-                                    val = full_test_df[col_name].iloc[0] if col_name in full_test_df.columns else 'N/A'
-                                    st.metric(first_result.formula_name[:20], f"{val:.2f}")
-
-                            # Results table
-                            st.markdown("### 📋 All Key Results")
-                            display_cols = ['no_of_premium_paid', 'policy_year'] + \
-                                        [r.formula_name.split(' → ')[-1] for r in formula_results[:8]]
-                            display_cols = [col for col in display_cols if col in full_test_df.columns]
-                            
-                            if display_cols:
-                                display_data = full_test_df[display_cols].iloc[0:1]
-                                st.dataframe(display_data.T.rename(columns={0: 'Value'}), use_container_width=True)
-                            
-                            st.success("✅ Single row test complete!")
-                            
-                        except Exception as e:
-                            st.error(f"Test error: {str(e)}")
-                            import traceback
-                            st.exception(traceback.format_exc())
-                            
-        except Exception as e:
-            st.error(f"Setup error: {str(e)}")
-
     
     # Run calculations
     col1, col2 = st.columns([1, 3])
