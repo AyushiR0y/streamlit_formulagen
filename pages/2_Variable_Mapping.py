@@ -565,32 +565,28 @@ def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict
     header_to_var_mapping format: { "Excel_Header": "VariableName" }
     Formula: "VariableName * 2"
     Result: "[Excel_Header] * 2"
-    
-    IMPORTANT: Keeps square brackets in the mapped expression
     """
     mapped_formulas = []
     
-    # Create reverse mapping: variable -> header (with brackets preserved)
-    var_to_header = {}
-    for header, var in header_to_var_mapping.items():
-        if var:
-            # Store with brackets already included
-            var_to_header[var] = f'[{header}]'
+    # Create reverse mapping: variable -> header
+    var_to_header = {var: header for header, var in header_to_var_mapping.items() if var}
+    
     
     for formula in formulas:
         expr = formula.get('formula_expression', '')
         original_expr = expr
         
-        # Replace each variable with its corresponding [header]
-        for var_name, bracketed_header in var_to_header.items():
+        # Replace each variable with its corresponding header
+        for var_name, excel_header in var_to_header.items():
             # Use word boundaries to avoid partial replacements
             pattern = r'\b' + re.escape(var_name) + r'\b'
-            expr = re.sub(pattern, bracketed_header, expr)
+            expr = re.sub(pattern, f'[{excel_header}]', expr)
+    
         
         mapped_formulas.append({
             'formula_name': formula.get('formula_name', ''),
             'original_expression': formula.get('formula_expression', ''),
-            'mapped_expression': expr  # This will now contain [Header] format
+            'mapped_expression': expr
         })
     
     return mapped_formulas
@@ -898,9 +894,9 @@ def main():
             # Header row
             col_h1, col_h2, col_h3 = st.columns([3, 3, 1])
             with col_h1:
-                st.markdown("**Excel Header / Variable**")
+                st.markdown("**Excel Header**")
             with col_h2:
-                st.markdown("**Mapped Variable / Excel Header**")
+                st.markdown("**Mapped Variable**")
             with col_h3:
                 st.markdown("**Actions**")
                         
@@ -912,120 +908,59 @@ def main():
             # Filter out removed headers
             active_headers = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
             
-            # Find unmapped variables (variables that don't appear in any mapping)
-            mapped_vars = set(st.session_state.header_to_var_mapping.values())
-            unmapped_vars = [v for v in current_variables if v and v not in mapped_vars]
-            
             # Create a form to batch updates
             with st.form(key="mapping_form"):
                 updated_mappings = {}
-                updated_var_to_header = {}  # NEW: For reverse mappings (variable -> header)
                 
-                # SECTION 1: Excel Headers -> Variables
-                if active_headers:
-                    st.markdown("**📊 Excel Columns → Formula Variables**")
-                    for header in active_headers:
-                        # Get current mapping for this header
-                        current_var = st.session_state.header_to_var_mapping.get(header, "")
-                        
-                        col1, col2, col3 = st.columns([3, 3, 1])
+                for header in active_headers:
+                    # Get current mapping for this header
+                    current_var = st.session_state.header_to_var_mapping.get(header, "")
+                    
+                    col1, col2, col3 = st.columns([3, 3, 1])
 
-                        with col1:
-                            st.text_input("Header", value=header, key=f"h_txt_{header}", label_visibility="collapsed", disabled=True)
-                        
-                        with col2:
-                            # Dropdown options: (None) + all variables
-                            dropdown_options = ["(None of the following)"] + current_variables
-                            
-                            # Determine index based on current mapping
-                            if current_var and current_var in dropdown_options:
-                                idx = dropdown_options.index(current_var)
-                            else:
-                                idx = 0  # Default to "(None of the following)"
-                            
-                            # Selectbox with unique key
-                            new_var = st.selectbox(
-                                "Variable",
-                                options=dropdown_options,
-                                index=idx,
-                                key=f"var_select_{header}",
-                                label_visibility="collapsed"
-                            )
-                            
-                            # Store in temporary dict (will be applied on form submit)
-                            final_var = "" if new_var == "(None of the following)" else new_var
-                            updated_mappings[header] = final_var
-                        
-                        with col3:
-                            # Remove checkbox instead of button (since we're in a form)
-                            remove = st.checkbox("🗑️", key=f"remove_{header}", help="Remove this column")
-                            if remove:
-                                if header not in st.session_state.removed_headers:
-                                    st.session_state.removed_headers.append(header)
-                                    
-                        st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
-                
-                # SECTION 2: Unmapped Variables -> Excel Headers
-                if unmapped_vars:
-                    st.markdown("---")
-                    st.markdown("**🔢 Unmapped Formula Variables → Excel Columns**")
-                    st.caption("These variables were extracted from formulas but haven't been mapped to any Excel column yet.")
+                    with col1:
+                        st.text_input("Header", value=header, key=f"h_txt_{header}", label_visibility="collapsed", disabled=True)
                     
-                    # Initialize var_to_header mapping if not exists
-                    if 'var_to_header_mapping' not in st.session_state:
-                        st.session_state.var_to_header_mapping = {}
+                    with col2:
+                        # Dropdown options: (None) + all variables
+                        dropdown_options = ["(None of the following)"] + current_variables
+                        
+                        # Determine index based on current mapping
+                        if current_var and current_var in dropdown_options:
+                            idx = dropdown_options.index(current_var)
+                        else:
+                            idx = 0  # Default to "(None of the following)"
+                        
+                        # Selectbox with unique key
+                        new_var = st.selectbox(
+                            "Variable",
+                            options=dropdown_options,
+                            index=idx,
+                            key=f"var_select_{header}",
+                            label_visibility="collapsed"
+                        )
+                        
+                        # Store in temporary dict (will be applied on form submit)
+                        final_var = "" if new_var == "(None of the following)" else new_var
+                        updated_mappings[header] = final_var
                     
-                    for var in unmapped_vars:
-                        current_header = st.session_state.var_to_header_mapping.get(var, "")
-                        
-                        col1, col2, col3 = st.columns([3, 3, 1])
-                        
-                        with col1:
-                            st.text_input("Variable", value=var, key=f"v_txt_{var}", label_visibility="collapsed", disabled=True)
-                        
-                        with col2:
-                            # Dropdown options: (None) + all Excel headers
-                            header_options = ["(None of the following)"] + st.session_state.excel_headers
-                            
-                            # Determine index
-                            if current_header and current_header in header_options:
-                                idx = header_options.index(current_header)
-                            else:
-                                idx = 0
-                            
-                            new_header = st.selectbox(
-                                "Excel Header",
-                                options=header_options,
-                                index=idx,
-                                key=f"header_select_{var}",
-                                label_visibility="collapsed"
-                            )
-                            
-                            final_header = "" if new_header == "(None of the following)" else new_header
-                            updated_var_to_header[var] = final_header
-                        
-                        with col3:
-                            st.write("")  # Empty space for alignment
-                        
-                        st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
+                    with col3:
+                        # Remove checkbox instead of button (since we're in a form)
+                        remove = st.checkbox("🗑️", key=f"remove_{header}", help="Remove this column")
+                        if remove:
+                            if header not in st.session_state.removed_headers:
+                                st.session_state.removed_headers.append(header)
+                                
+                    st.markdown('<hr style="margin: 0.5rem 0; border: 0; border-top: 1px solid #e0e0e0;">', unsafe_allow_html=True)
                 
                 # Submit button for the form
                 submitted = st.form_submit_button("💾 Save Changes", type="primary")
                 
                 if submitted:
-                    # Apply header -> variable mappings
+                    # Apply all changes at once
                     for header, var in updated_mappings.items():
                         if header not in st.session_state.removed_headers:
                             st.session_state.header_to_var_mapping[header] = var
-                    
-                    # Apply variable -> header mappings (reverse)
-                    for var, header in updated_var_to_header.items():
-                        if header:
-                            # Add to header_to_var_mapping in reverse
-                            st.session_state.header_to_var_mapping[header] = var
-                    
-                    # Store var_to_header mapping
-                    st.session_state.var_to_header_mapping = updated_var_to_header
                     
                     st.success("✅ Changes saved!")
                     st.rerun()
@@ -1033,24 +968,25 @@ def main():
         with tab2:
             st.markdown("#### Current Mappings (JSON)")
             
-            with col_btn2:
-                # Export JSON - preserve brackets in mapped expressions
-                active_mapping = {
-                    h: v for h, v in st.session_state.header_to_var_mapping.items() 
-                    if v and h not in st.session_state.removed_headers
-                }
-                
-                # Create export with bracketed format
-                export_mapping = {}
-                for header, var in active_mapping.items():
-                    export_mapping[f'[{header}]'] = var  # Add brackets to keys
-                
-                st.download_button(
-                    label="📥 Export JSON",
-                    data=json.dumps(export_mapping, indent=2),
-                    file_name="final_mappings.json",
-                    mime="application/json"
-                )
+            # Filter out empty mappings and removed headers
+            active_mapping = {
+                h: v for h, v in st.session_state.header_to_var_mapping.items() 
+                if v and h not in st.session_state.removed_headers
+            }
+            
+            st.json(active_mapping)
+            
+            # Show statistics
+            st.write(f"**Active mappings:** {len(active_mapping)}")
+            st.write(f"**Removed headers:** {len(st.session_state.removed_headers)}")
+            
+            # Provide download for this JSON
+            st.download_button(
+                label="📥 Download Mapping JSON",
+                data=json.dumps(active_mapping, indent=2),
+                file_name="header_to_variable_mapping.json",
+                mime="application/json"
+            )
             
             # Show removed headers
             if st.session_state.removed_headers:
