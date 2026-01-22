@@ -550,7 +550,14 @@ def debug_single_row_calculation(
     # - If value is missing OR zero → overwrite with calculated result
     # ---------------------------------------
 
-    existing_val = working_df.at[0, formula_name] if formula_name in working_df.columns else None
+    row_idx = working_df.index[0]
+
+    existing_val = (
+        working_df.at[row_idx, formula_name]
+        if formula_name in working_df.columns
+        else None
+    )
+
 
     should_overwrite = (
         existing_val is None
@@ -559,7 +566,7 @@ def debug_single_row_calculation(
     )
 
     if should_overwrite:
-        working_df[formula_name] = result
+        working_df.at[row_idx, formula_name] = result
         st.info(f"✏️ `{formula_name}` updated → {result}")
     else:
         st.success(f"🔒 `{formula_name}` preserved (manual value = {existing_val})")
