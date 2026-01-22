@@ -455,119 +455,298 @@ def run_calculations(df: pd.DataFrame,
     return result_df, calculation_results
 
 # --- NEW: Test Formula Functionality ---
+def extract_variables_from_formulas(formulas: List[Dict]) -> Dict[str, List[str]]:
+    """Extract all unique variables from formulas JSON"""
+    variables = {
+        'bracketed': set(),  # [VARIABLE_NAME] format
+        'plain': set(),      # VARIABLE_NAME format
+        'derived': set()     # derived formula variables
+    }
+    
+    # Extract from main formulas
+    for formula in formulas:
+        formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
+        
+        # Find bracketed variables [VAR_NAME]
+        bracketed_matches = re.findall(r'\[([^\]]+)\]', formula_expr)
+        variables['bracketed'].update(bracketed_matches)
+        
+        # Find plain variables (exclude functions and operators)
+        clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)  # Remove bracketed first
+        clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
+        clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
+        
+        # Find potential variable names
+        potential_vars = re.findall(r'\b[A-Z][A-Z0-9_]*\b', clean_expr)
+        
+        # Filter out common functions and keywords
+        exclude_words = {'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'CURRENT_DATE', 'MONTHS_BETWEEN', 'ADD_MONTHS'}
+        plain_vars = [var for var in potential_vars if var not in exclude_words and len(var) > 1]
+        variables['plain'].update(plain_vars)
+    
+    # Add derived formula variables
+    for formula_name, info in BASIC_DERIVED_FORMULAS.items():
+        variables['derived'].update(info['variables'])
+    
+    # Convert sets to sorted lists
+    return {
+        'bracketed': sorted(list(variables['bracketed'])) if variables['bracketed'] else [],
+        'plain': sorted(list(variables['plain'])) if variables['plain'] else [],
+        'derived': sorted(list(variables['derived'])) if variables['derived'] else []
+    }
+
+def get_smart_default_value(var_name: str):
+    """Get smart default value based on variable name patterns"""
+    var_upper = var_name.upper()
+    
+    # Date variables
+    if 'DATE' in var_upper:
+        if 'START' in var_upper:
+            return date(2020, 1, 1)
+        else:
+            return date(2023, 6, 15)
+    
+    # Factor variables (0-1 range)
+    if 'FACTOR' in var_upper:
+        if 'GSV' in var_upper or 'SSV' in var_upper:
+            return 0.3
+        elif 'SV' in var_upper:
+            return 0.5
+        else:
+            return 0.1
+    
+    # Premium/Amount variables
+    if any(term in var_upper for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM']):
+        if 'TERM' in var_upper:
+            return 10  # Term in years
+        elif 'FULL' in var_upper or 'TOTAL' in var_upper:
+            return 50000.0
+        elif 'INCOME' in var_upper:
+            return 10000.0
+        else:
+            return 100000.0
+    
+    # Term variables
+    if 'TERM' in var_upper:
+        return 10
+    
+    # ROP (Return of Premium) variables
+    if 'ROP' in var_upper:
+        return 200000.0
+    
+    # Default numeric
+    return 100.0
+
 def test_formulas_interface():
     """Create an interface to test formulas with manual inputs"""
     st.markdown("### 🧪 Formula Testing Interface")
     st.markdown("Test your formulas and derived calculations before running on full dataset")
+    
+    # Extract variables from loaded formulas
+    formula_vars = {'bracketed': [], 'plain': [], 'derived': []}
+    if 'formulas' in st.session_state and st.session_state.formulas:
+        formula_vars = extract_variables_from_formulas(st.session_state.formulas)
     
     with st.expander("🔧 Test Single Formula", expanded=True):
         col1, col2 = st.columns([1, 2])
         
         with col1:
             st.markdown("#### Input Values")
-            # Input fields for derived formula variables
-            st.markdown("**Derived Formula Variables:**")
             
-            # Date inputs for derived formulas
-            term_start_date = st.date_input("TERM_START_DATE", value=date(2020, 1, 1))
-            fup_date = st.date_input("FUP_Date", value=date(2023, 6, 15))
-            surrender_date = st.date_input("DATE_OF_SURRENDER", value=date(2023, 6, 15))
-            benefit_term = st.number_input("BENEFIT_TERM (years)", value=10, min_value=1)
+            # Create input fields dynamically based on extracted variables
+            input_values = {}
             
-            st.markdown("**Formula Variables:**")
-            # Input fields for your formula variables
-            full_term_premium = st.number_input("FULL_TERM_PREMIUM", value=50000.0, min_value=0.0)
-            sum_assured = st.number_input("SUM_ASSURED", value=500000.0, min_value=0.0)
-            gsv_factor = st.number_input("GSV2_FACTOR", value=0.3, min_value=0.0, max_value=1.0)
-            premium_term = st.number_input("PREMIUM_TERM", value=10, min_value=1)
-            income_benefit_amount = st.number_input("Income_Benefit_Amount", value=10000.0, min_value=0.0)
-            rop_benefit = st.number_input("ROP_Benefit", value=200000.0, min_value=0.0)
-            sv_factor = st.number_input("SV_FACTOR", value=0.5, min_value=0.0, max_value=1.0)
-            ssv2_factor = st.number_input("SSV2_FACTOR", value=0.4, min_value=0.0, max_value=1.0)
-            ssv3_factor = st.number_input("SSV3_FACTOR", value=0.2, min_value=0.0, max_value=1.0)
+            # Derived formula variables
+            if formula_vars['derived']:
+                st.markdown("**Derived Formula Variables:**")
+                for var in formula_vars['derived']:
+                    default_value = get_smart_default_value(var)
+                    if 'DATE' in var.upper():
+                        input_values[var] = st.date_input(var, value=default_value)
+                    elif 'TERM' in var.upper() and var != 'FUP_Date':
+                        input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1)
+                    else:
+                        input_values[var] = st.date_input(var, value=default_value)
+            
+            # Bracketed variables from formulas
+            if formula_vars['bracketed']:
+                st.markdown("**Formula Variables (from mapped expressions):**")
+                for var in formula_vars['bracketed']:
+                    clean_var = var.replace('_', ' ').title()
+                    default_value = get_smart_default_value(var)
+                    
+                    if 'DATE' in var.upper():
+                        input_values[var] = st.date_input(f"{clean_var}", value=default_value)
+                    elif 'FACTOR' in var.upper():
+                        input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, max_value=1.0, step=0.01)
+                    elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
+                        input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
+                    else:
+                        input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
+            
+            # Plain variables from formulas
+            if formula_vars['plain']:
+                st.markdown("**Additional Formula Variables:**")
+                for var in formula_vars['plain']:
+                    if var not in input_values:  # Avoid duplicates
+                        clean_var = var.replace('_', ' ').title()
+                        default_value = get_smart_default_value(var)
+                        
+                        if 'DATE' in var.upper():
+                            input_values[var] = st.date_input(f"{clean_var}", value=default_value)
+                        elif 'FACTOR' in var.upper():
+                            input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, max_value=1.0, step=0.01)
+                        elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
+                            input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
+                        else:
+                            input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
             
         with col2:
             st.markdown("#### Test Results")
             
-            # Create test data row
-            test_row = pd.Series({
-                'TERM_START_DATE': pd.to_datetime(term_start_date),
-                'FUP_Date': pd.to_datetime(fup_date),
-                'DATE_OF_SURRENDER': pd.to_datetime(surrender_date),
-                'BENEFIT_TERM': benefit_term,
-                'FULL_TERM_PREMIUM': full_term_premium,
-                'SUM_ASSURED': sum_assured,
-                'GSV2_FACTOR': gsv_factor,
-                'PREMIUM_TERM': premium_term,
-                'Income_Benefit_Amount': income_benefit_amount,
-                'ROP_Benefit': rop_benefit,
-                'SV_FACTOR': sv_factor,
-                'SSV2_FACTOR': ssv2_factor,
-                'SSV3_FACTOR': ssv3_factor
-            })
+            # Create test data row from dynamic inputs
+            test_row_data = {}
             
-            # Test derived formulas first
+            # Add derived formula inputs
+            for var in formula_vars['derived']:
+                if var in input_values:
+                    if 'DATE' in var:
+                        test_row_data[var] = pd.to_datetime(input_values[var])
+                    else:
+                        test_row_data[var] = input_values[var]
+            
+            # Add bracketed formula inputs (remove brackets for internal use)
+            for var in formula_vars['bracketed']:
+                clean_var = var  # Keep original for mapping
+                test_row_data[clean_var] = input_values[var]
+            
+            # Add plain formula inputs
+            for var in formula_vars['plain']:
+                if var not in test_row_data:
+                    test_row_data[var] = input_values[var]
+            
+            # Create pandas Series from collected data
+            test_row = pd.Series(test_row_data)
+            
+            # Create a working copy that will accumulate calculated values
+            working_row = test_row.copy()
+            
+            # Add derived formula inputs to working row
+            for var in formula_vars['derived']:
+                if var in input_values:
+                    if 'DATE' in var.upper():
+                        working_row[var] = pd.to_datetime(input_values[var])
+                    else:
+                        working_row[var] = input_values[var]
+            
+            # Test derived formulas first and store results
             st.markdown("**Derived Formulas Results:**")
             derived_results = {}
             
             for formula_name, formula_info in BASIC_DERIVED_FORMULAS.items():
-                result = calculate_row(test_row, formula_info['formula'], {}, is_pre_mapped=False)
+                result = calculate_row(working_row, formula_info['formula'], {}, is_pre_mapped=False)
                 derived_results[formula_name] = result
+                
+                # Add to working row immediately for subsequent formulas
+                if result is not None:
+                    working_row[formula_name] = result
                 
                 col_success, col_result = st.columns([3, 1])
                 with col_success:
                     if result is not None and result != 0:
-                        st.success(f"✅ {formula_name}: {result}")
+                        if isinstance(result, float) and result.is_integer():
+                            st.success(f"✅ {formula_name}: {int(result)}")
+                        else:
+                            st.success(f"✅ {formula_name}: {result:.2f}")
                     else:
-                        st.warning(f"⚠️ {formula_name}: {result} (Check inputs)")
+                        if result == 0:
+                            st.warning(f"⚠️ {formula_name}: {result} (This will cause division issues in dependent formulas)")
+                        else:
+                            st.warning(f"⚠️ {formula_name}: {result} (Check inputs)")
                 with col_result:
                     if st.button("Debug", key=f"debug_derived_{formula_name}"):
-                        st.json({
+                        debug_data = {
                             'formula': formula_info['formula'],
-                            'inputs': {
-                                'TERM_START_DATE': str(term_start_date),
-                                'FUP_Date': str(fup_date),
-                                'DATE_OF_SURRENDER': str(surrender_date),
-                                'BENEFIT_TERM': benefit_term
-                            },
-                            'calculated_months': months_between(term_start_date, fup_date)
-                        })
+                            'inputs': {var: str(working_row.get(var, 'Not found')) for var in formula_info['variables']},
+                            'calculated_months': None,
+                            'explanation': f"MONTHS_BETWEEN({working_row.get('TERM_START_DATE', 'missing')}, {working_row.get('FUP_Date', 'missing')}) / 12"
+                        }
+                        # Calculate months_between for date variables
+                        if 'FUP_Date' in working_row and 'TERM_START_DATE' in working_row:
+                            debug_data['calculated_months'] = months_between(working_row['TERM_START_DATE'], working_row['FUP_Date'])
+                            debug_data['final_result'] = f"{debug_data['calculated_months']} months ÷ 12 = {debug_data['calculated_months'] / 12:.2f} years"
+                        st.json(debug_data)
             
-            # Add derived results to test row for formula testing
+            # Add derived results to working row for formula testing
             for key, value in derived_results.items():
-                test_row[key] = value
+                if value is not None:
+                    working_row[key] = value
             
             st.markdown("---")
             st.markdown("**Your Formulas Results:**")
             
-            # Test your formulas
+            # Test your formulas in dependency order
             if 'formulas' in st.session_state and st.session_state.formulas:
-                for formula in st.session_state.formulas:
+                # Sort formulas to handle dependencies - simpler formulas first
+                formulas_to_process = st.session_state.formulas.copy()
+                processed_formulas = {}
+                max_iterations = len(formulas_to_process) * 2  # Prevent infinite loops
+                iterations = 0
+                
+                while formulas_to_process and iterations < max_iterations:
+                    iterations += 1
+                    formula = formulas_to_process.pop(0)
                     formula_name = formula.get('formula_name', 'Unknown')
                     formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
                     
                     if formula_expr:
                         try:
-                            result = calculate_row(test_row, formula_expr, {}, is_pre_mapped=True)
+                            # Try to calculate - this will use previously calculated values
+                            result = calculate_row(working_row, formula_expr, {}, is_pre_mapped=True)
                             
-                            col_success, col_result = st.columns([3, 1])
-                            with col_success:
-                                if result is not None:
+                            if result is not None:
+                                # Store result in working row for future formulas
+                                working_row[formula_name] = result
+                                processed_formulas[formula_name] = result
+                                
+                                col_success, col_result = st.columns([3, 1])
+                                with col_success:
                                     if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
                                         st.success(f"✅ {formula_name}: {result:,.2f}")
                                     else:
                                         st.success(f"✅ {formula_name}: {result}")
+                                with col_result:
+                                    if st.button("Debug", key=f"debug_formula_{formula_name}"):
+                                        # Show all available variables in working row
+                                        relevant_inputs = {}
+                                        for col in working_row.index:
+                                            # Check if this variable appears in the formula
+                                            if f'[{col}]' in formula_expr or col in formula_expr:
+                                                relevant_inputs[col] = working_row[col]
+                                        
+                                        st.json({
+                                            'formula': formula_expr,
+                                            'inputs': relevant_inputs,
+                                            'result': result,
+                                            'available_variables': list(working_row.index)
+                                        })
+                            else:
+                                # If calculation failed, put it back in queue to try later
+                                if iterations < max_iterations - 1:
+                                    formulas_to_process.append(formula)
                                 else:
-                                    st.error(f"❌ {formula_name}: Failed to calculate")
-                            with col_result:
-                                if st.button("Debug", key=f"debug_formula_{formula_name}"):
-                                    st.json({
-                                        'formula': formula_expr,
-                                        'inputs': {col: test_row[col] for col in test_row.index if col in formula_expr},
-                                        'result': result
-                                    })
+                                    st.error(f"❌ {formula_name}: Failed to calculate after all dependencies")
+                                    
                         except Exception as e:
                             st.error(f"❌ {formula_name}: {str(e)}")
+                            # Don't requeue on error, just skip
+                
+                # Show any formulas that couldn't be processed
+                if formulas_to_process:
+                    st.warning(f"⚠️ Could not process {len(formulas_to_process)} formulas due to dependency issues")
+                    for formula in formulas_to_process:
+                        st.caption(f"  - {formula.get('formula_name', 'Unknown')}")
+                        
             else:
                 st.info("No formulas loaded. Upload formulas JSON to test them.")
 
