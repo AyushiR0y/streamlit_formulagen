@@ -542,35 +542,9 @@ def debug_single_row_calculation(
 
     # ----------------------------
     # Create a single-row dataframe
+    # FIX: Initialize working_df here directly
     # ----------------------------
-    base_df = pd.DataFrame([input_values])
-    # ---------------------------------------
-    # Overwrite rule:
-    # - If user entered a NON-ZERO value → keep it
-    # - If value is missing OR zero → overwrite with calculated result
-    # ---------------------------------------
-
-    row_idx = working_df.index[0]
-
-    existing_val = (
-        working_df.at[row_idx, formula_name]
-        if formula_name in working_df.columns
-        else None
-    )
-
-
-    should_overwrite = (
-        existing_val is None
-        or pd.isna(existing_val)
-        or safe_convert_to_number(existing_val) == 0
-    )
-
-    if should_overwrite:
-        working_df.at[row_idx, formula_name] = result
-        st.info(f"✏️ `{formula_name}` updated → {result}")
-    else:
-        st.success(f"🔒 `{formula_name}` preserved (manual value = {existing_val})")
-
+    working_df = pd.DataFrame([input_values])
 
     st.write("### ▶️ Initial Input Row")
     st.dataframe(working_df)
@@ -588,10 +562,12 @@ def debug_single_row_calculation(
         all_formulas.extend(derived)
 
     all_formulas.extend(formulas)
-
     st.info(f"Running {len(all_formulas)} formulas sequentially")
 
     # ----------------------------
+    # Execute formulas one-by-one
+    # ----------------------------
+        # ----------------------------
     # Execute formulas one-by-one
     # ----------------------------
     for idx, formula in enumerate(all_formulas, start=1):
@@ -607,7 +583,7 @@ def debug_single_row_calculation(
         row = working_df.iloc[0]
 
         # ----------------------------
-        # Collect variable values (same logic as calculate_row)
+        # Collect variable values
         # ----------------------------
         var_values = {}
 
@@ -650,8 +626,28 @@ def debug_single_row_calculation(
 
         # ----------------------------
         # Persist result so next formulas can use it
+        # FIX: This logic was previously outside the loop and broken.
+        # It checks if the user provided a manual value. If not, it updates the row.
         # ----------------------------
-        working_df[formula_name] = result
+        existing_val = (
+            working_df.at[0, formula_name]
+            if formula_name in working_df.columns
+            else None
+        )
+
+        # If no value exists OR value is 0/NaN, overwrite with calculation
+        should_overwrite = (
+            existing_val is None
+            or pd.isna(existing_val)
+            or safe_convert_to_number(existing_val) == 0
+        )
+
+        if should_overwrite:
+            working_df[formula_name] = result
+            st.info(f"✏️ `{formula_name}` updated → {result}")
+        else:
+            # If user provided a non-zero value in inputs, keep it
+            st.success(f"🔒 `{formula_name}` preserved (manual value = {existing_val})")
 
         st.write("### 📊 Row State After Calculation")
         st.dataframe(working_df)
