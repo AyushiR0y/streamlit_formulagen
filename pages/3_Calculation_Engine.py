@@ -36,7 +36,7 @@ class CalculationResult:
 BASIC_DERIVED_FORMULAS = {
     'no_of_premium_paid': {
         'description': 'Number of years of premiums paid (FUP_Date - TERM_START_DATE) / 12',
-        'formula': 'MONTHS_BETWEEN(TERM_START_DATE, FUP_Date) / 12',  # FIX: Divide by 12 to get YEARS
+        'formula': 'MONTHS_BETWEEN(TERM_START_DATE, FUP_Date) / 12',
         'variables': ['FUP_Date', 'TERM_START_DATE']
     },
     'policy_year': {
@@ -65,7 +65,7 @@ def get_derived_formulas() -> List[Dict]:
             'formula_expression': info['formula'],
             'description': info['description'],
             'variables_used': ', '.join(info['variables']),
-            'is_pre_mapped': False # Derived formulas use variables, not direct headers
+            'is_pre_mapped': False
         })
     return formulas
 
@@ -108,7 +108,6 @@ def months_between(date1, date2):
         d1 = pd.to_datetime(date1)
         d2 = pd.to_datetime(date2)
         
-        # Calculate difference: date2 - date1
         months = (d2.year - d1.year) * 12 + (d2.month - d1.month)
         return float(months)
     except:
@@ -130,24 +129,21 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
     try:
         eval_expr = expression.strip()
 
-        # 0. Handle Excel-style assignment expressions: "VAR = expr" -> "expr"
         if '=' in eval_expr and not any(op in eval_expr for op in ['==', '!=', '<=', '>=']):
             parts = eval_expr.split('=')
             if len(parts) >= 2:
                 eval_expr = parts[-1].strip()
 
-        # 0b. Handle Excel-style percent literals in expressions, e.g. "105%" or "1.05%"
         eval_expr = re.sub(
             r'(?<![a-zA-Z0-9_])(\d+(?:\.\d+)?)\s*%',
             r'(\1/100)',
             eval_expr
         )
         
-        # 1. Handle special date functions BEFORE variable replacement
         if 'MONTHS_BETWEEN' in eval_expr.upper():
             pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
             matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
-            for match in reversed(matches):  # Process from right to left to preserve indices
+            for match in reversed(matches):
                 var1, var2 = match.group(1).strip(), match.group(2).strip()
                 val1 = variables.get(var1, var1)
                 val2 = variables.get(var2, var2)
@@ -161,9 +157,7 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                 var1, var2 = match.group(1).strip(), match.group(2).strip()
                 val1 = variables.get(var1, var1)
                 
-                # Evaluate var2 expression first
                 try:
-                    # Replace variables in var2
                     var2_eval = var2
                     for var_name in sorted(variables.keys(), key=len, reverse=True):
                         if var_name in var2_eval:
@@ -184,7 +178,6 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             eval_expr = re.sub(r'\bCURRENT_DATE\b', f"'{current_date.strftime('%Y-%m-%d')}'", 
                               eval_expr, flags=re.IGNORECASE)
         
-        # 2. Excel function mappings
         func_mappings = {
             r'\bMAX\s*\(': 'max(',
             r'\bMIN\s*\(': 'min(',
@@ -198,7 +191,6 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         for pattern, replacement in func_mappings.items():
             eval_expr = re.sub(pattern, replacement, eval_expr, flags=re.IGNORECASE)
         
-        # 3. Replace variables - sort by length descending to avoid partial matches
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
         
         for var_name in sorted_vars:
@@ -211,7 +203,6 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                 pattern = r'\b' + re.escape(var_name) + r'\b'
                 eval_expr = re.sub(pattern, str(numeric_value), eval_expr, flags=re.IGNORECASE)
         
-        # 4. Safe evaluation
         allowed_builtins = {
             'max': max, 'min': min, 'abs': abs, 'round': round,
             'int': int, 'float': float, 'pow': pow, 'sum': sum, 'len': len
@@ -231,11 +222,9 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
 def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str], is_pre_mapped: bool = False) -> Any:
     """
     Calculate formula result for a single row.
-    HYBRID LOGIC: Handles [Bracketed Headers], Existing Columns (results from previous formulas), and Standard Variables.
     """
     var_values = {}
     
-    # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
     bracketed_headers = set()
     if is_pre_mapped:
         pattern = r'\[([^\]]+)\]'
@@ -257,7 +246,6 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             else:
                 var_values[f"[{header_name}]"] = 0.0
 
-    # 2. IDENTIFY Potential Variables (Non-bracketed tokens)
     clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
     clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
@@ -267,20 +255,15 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float'}
     potential_vars = potential_vars - python_keywords
     
-    # 3. POPULATE var_values with found variables
-    # FIX: Build both mappings to handle both directions
     var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
     
     for var_name in potential_vars:
-        # A) Check if it's an existing column (e.g. 'no_of_premium_paid' calculated earlier)
         if var_name in row.index:
             var_values[var_name] = row[var_name]
             continue
         
-        # B) Check if it maps via header_to_var_mapping
         mapped_header = None
         
-        # Try both directions
         if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
             mapped_header = header_to_var_mapping[var_name]
         elif var_name in var_to_header_mapping:
@@ -290,7 +273,6 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             if mapped_header in row.index:
                 var_values[var_name] = row[mapped_header]
             else:
-                # Case-insensitive match
                 for col in row.index:
                     if col.lower() == str(mapped_header).lower():
                         var_values[var_name] = row[col]
@@ -303,20 +285,17 @@ def find_matching_column(formula_name: str, df_columns: List[str], header_to_var
     """Find the best matching column for a formula"""
     formula_lower = formula_name.lower().replace('_', '').replace(' ', '')
     
-    # 1. Exact match
     for col in df_columns:
         col_clean = col.lower().replace('_', '').replace(' ', '')
         if col_clean == formula_lower:
             return col
     
-    # 2. Partial match
     for col in df_columns:
         col_lower = col.lower()
         fname_lower = formula_name.lower()
         if fname_lower in col_lower or col_lower in fname_lower:
             return col
     
-    # 3. Token matching
     formula_tokens = set(re.findall(r'\w+', formula_name.lower()))
     best_match = None
     best_score = 0
@@ -341,7 +320,6 @@ def run_calculations(df: pd.DataFrame,
     result_df = df.copy()
     calculation_results = []
     
-    # FIX: Add derived formulas FIRST so they run before dependent formulas
     all_formulas = []
     if include_derived:
         derived = get_derived_formulas()
@@ -361,7 +339,6 @@ def run_calculations(df: pd.DataFrame,
         formula_expr = formula.get('formula_expression', '')
         is_pre_mapped = formula.get('is_pre_mapped', False)
         
-        # Find matching column
         output_col = find_matching_column(formula_name, df_columns, header_to_var_mapping)
         
         col_existed = output_col in result_df.columns
@@ -378,7 +355,6 @@ def run_calculations(df: pd.DataFrame,
         success_count = 0
         total_rows = len(result_df)
         
-        # Debug first row
         if total_rows > 0:
             first_row = result_df.iloc[0]
             
@@ -402,11 +378,9 @@ def run_calculations(df: pd.DataFrame,
                 if first_result is None:
                     st.error("⚠️ Test calculation returned None - check formula, headers, and variables")
         
-        # Progress tracking
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Calculate for all rows
         for idx in range(len(result_df)):
             try:
                 row = result_df.iloc[idx]
@@ -458,37 +432,30 @@ def run_calculations(df: pd.DataFrame,
 def extract_variables_from_formulas(formulas: List[Dict]) -> Dict[str, List[str]]:
     """Extract all unique variables from formulas JSON"""
     variables = {
-        'bracketed': set(),  # [VARIABLE_NAME] format
-        'plain': set(),      # VARIABLE_NAME format
-        'derived': set()     # derived formula variables
+        'bracketed': set(),
+        'plain': set(),
+        'derived': set()
     }
     
-    # Extract from main formulas
     for formula in formulas:
         formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
         
-        # Find bracketed variables [VAR_NAME]
         bracketed_matches = re.findall(r'\[([^\]]+)\]', formula_expr)
         variables['bracketed'].update(bracketed_matches)
         
-        # Find plain variables (exclude functions and operators)
-        clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)  # Remove bracketed first
+        clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
         clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
         clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
         
-        # Find potential variable names
         potential_vars = re.findall(r'\b[A-Z][A-Z0-9_]*\b', clean_expr)
         
-        # Filter out common functions and keywords
         exclude_words = {'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'CURRENT_DATE', 'MONTHS_BETWEEN', 'ADD_MONTHS'}
         plain_vars = [var for var in potential_vars if var not in exclude_words and len(var) > 1]
         variables['plain'].update(plain_vars)
     
-    # Add derived formula variables
     for formula_name, info in BASIC_DERIVED_FORMULAS.items():
         variables['derived'].update(info['variables'])
     
-    # Convert sets to sorted lists
     return {
         'bracketed': sorted(list(variables['bracketed'])) if variables['bracketed'] else [],
         'plain': sorted(list(variables['plain'])) if variables['plain'] else [],
@@ -518,7 +485,7 @@ def get_smart_default_value(var_name: str):
     # Premium/Amount variables
     if any(term in var_upper for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM']):
         if 'TERM' in var_upper:
-            return 10  # Term in years
+            return 10.0  # FIX: Return float 10.0 instead of int 10
         elif 'FULL' in var_upper or 'TOTAL' in var_upper:
             return 50000.0
         elif 'INCOME' in var_upper:
@@ -528,7 +495,7 @@ def get_smart_default_value(var_name: str):
     
     # Term variables
     if 'TERM' in var_upper:
-        return 10
+        return 10.0  # FIX: Return float 10.0 instead of int 10
     
     # ROP (Return of Premium) variables
     if 'ROP' in var_upper:
@@ -536,13 +503,12 @@ def get_smart_default_value(var_name: str):
     
     # Default numeric value
     return 1000.0
-
+    
 def test_formulas_interface():
     """Create an interface to test formulas with manual inputs"""
     st.markdown("### 🧪 Formula Testing Interface")
     st.markdown("Test your formulas and derived calculations before running on full dataset")
     
-    # Extract variables from loaded formulas
     formula_vars = {'bracketed': [], 'plain': [], 'derived': []}
     if 'formulas' in st.session_state and st.session_state.formulas:
         formula_vars = extract_variables_from_formulas(st.session_state.formulas)
@@ -553,10 +519,8 @@ def test_formulas_interface():
         with col1:
             st.markdown("#### Input Values")
             
-            # Create input fields dynamically based on extracted variables
             input_values = {}
             
-            # Derived formula variables
             if formula_vars['derived']:
                 st.markdown("**Derived Formula Variables:**")
                 for var in formula_vars['derived']:
@@ -564,14 +528,10 @@ def test_formulas_interface():
                     if 'DATE' in var.upper():
                         input_values[var] = st.date_input(var, value=default_value)
                     elif 'TERM' in var.upper() and var != 'FUP_Date':
-                        input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1)
+                        input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1.0) # Fixed min_value type
                     else:
-                        # Ensure we have a numeric value for non-date variables
-                        if isinstance(default_value, date):
-                            default_value = 1000.0  # Safe fallback
-                        input_values[var] = st.number_input(var, value=default_value, min_value=0.0)
+                        input_values[var] = st.date_input(var, value=default_value)
             
-            # Bracketed variables from formulas
             if formula_vars['bracketed']:
                 st.markdown("**Formula Variables (from mapped expressions):**")
                 for var in formula_vars['bracketed']:
@@ -585,16 +545,14 @@ def test_formulas_interface():
                     elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
                         input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
                     else:
-                        # Ensure numeric default for number_input
                         if isinstance(default_value, date):
-                            default_value = 1000.0  # Safe fallback for numeric
+                            default_value = default_value.year
                         input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
             
-            # Plain variables from formulas
             if formula_vars['plain']:
                 st.markdown("**Additional Formula Variables:**")
                 for var in formula_vars['plain']:
-                    if var not in input_values:  # Avoid duplicates
+                    if var not in input_values:
                         clean_var = var.replace('_', ' ').title()
                         default_value = get_smart_default_value(var)
                         
@@ -610,10 +568,8 @@ def test_formulas_interface():
         with col2:
             st.markdown("#### Test Results")
             
-            # Create test data row from dynamic inputs
             test_row_data = {}
             
-            # Add derived formula inputs
             for var in formula_vars['derived']:
                 if var in input_values:
                     if 'DATE' in var.upper():
@@ -624,9 +580,8 @@ def test_formulas_interface():
                     else:
                         test_row_data[var] = input_values[var]
             
-            # Add bracketed formula inputs (remove brackets for internal use)
             for var in formula_vars['bracketed']:
-                clean_var = var  # Keep original for mapping
+                clean_var = var
                 if var in input_values:
                     if 'DATE' in var.upper():
                         if isinstance(input_values[var], date):
@@ -636,7 +591,6 @@ def test_formulas_interface():
                     else:
                         test_row_data[clean_var] = input_values[var]
             
-            # Add plain formula inputs
             for var in formula_vars['plain']:
                 if var not in test_row_data:
                     if var in input_values:
@@ -648,13 +602,9 @@ def test_formulas_interface():
                         else:
                             test_row_data[var] = input_values[var]
             
-            # Create pandas Series from collected data
             test_row = pd.Series(test_row_data)
-            
-            # Create a working copy that will accumulate calculated values
             working_row = test_row.copy()
             
-            # Add derived formula inputs to working row
             for var in formula_vars['derived']:
                 if var in input_values:
                     if 'DATE' in var.upper():
@@ -662,7 +612,6 @@ def test_formulas_interface():
                     else:
                         working_row[var] = input_values[var]
             
-            # Test derived formulas first and store results
             st.markdown("**Derived Formulas Results:**")
             derived_results = {}
             
@@ -670,7 +619,6 @@ def test_formulas_interface():
                 result = calculate_row(working_row, formula_info['formula'], {}, is_pre_mapped=False)
                 derived_results[formula_name] = result
                 
-                # Add to working row immediately for subsequent formulas
                 if result is not None:
                     working_row[formula_name] = result
                 
@@ -694,13 +642,11 @@ def test_formulas_interface():
                             'calculated_months': None,
                             'explanation': f"MONTHS_BETWEEN({working_row.get('TERM_START_DATE', 'missing')}, {working_row.get('FUP_Date', 'missing')}) / 12"
                         }
-                        # Calculate months_between for date variables
                         if 'FUP_Date' in working_row and 'TERM_START_DATE' in working_row:
                             debug_data['calculated_months'] = months_between(working_row['TERM_START_DATE'], working_row['FUP_Date'])
                             debug_data['final_result'] = f"{debug_data['calculated_months']} months ÷ 12 = {debug_data['calculated_months'] / 12:.2f} years"
                         st.json(debug_data)
             
-            # Add derived results to working row for formula testing
             for key, value in derived_results.items():
                 if value is not None:
                     working_row[key] = value
@@ -708,12 +654,10 @@ def test_formulas_interface():
             st.markdown("---")
             st.markdown("**Your Formulas Results:**")
             
-            # Test your formulas in dependency order
             if 'formulas' in st.session_state and st.session_state.formulas:
-                # Sort formulas to handle dependencies - simpler formulas first
                 formulas_to_process = st.session_state.formulas.copy()
                 processed_formulas = {}
-                max_iterations = len(formulas_to_process) * 2  # Prevent infinite loops
+                max_iterations = len(formulas_to_process) * 2
                 iterations = 0
                 
                 while formulas_to_process and iterations < max_iterations:
@@ -724,11 +668,9 @@ def test_formulas_interface():
                     
                     if formula_expr:
                         try:
-                            # Try to calculate - this will use previously calculated values
                             result = calculate_row(working_row, formula_expr, {}, is_pre_mapped=True)
                             
                             if result is not None:
-                                # Store result in working row for future formulas
                                 working_row[formula_name] = result
                                 processed_formulas[formula_name] = result
                                 
@@ -740,10 +682,8 @@ def test_formulas_interface():
                                         st.success(f"✅ {formula_name}: {result}")
                                 with col_result:
                                     if st.button("Debug", key=f"debug_formula_{formula_name}"):
-                                        # Show all available variables in working row
                                         relevant_inputs = {}
                                         for col in working_row.index:
-                                            # Check if this variable appears in the formula
                                             if f'[{col}]' in formula_expr or col in formula_expr:
                                                 relevant_inputs[col] = working_row[col]
                                         
@@ -754,7 +694,6 @@ def test_formulas_interface():
                                             'available_variables': list(working_row.index)
                                         })
                             else:
-                                # If calculation failed, put it back in queue to try later
                                 if iterations < max_iterations - 1:
                                     formulas_to_process.append(formula)
                                 else:
@@ -762,9 +701,7 @@ def test_formulas_interface():
                                     
                         except Exception as e:
                             st.error(f"❌ {formula_name}: {str(e)}")
-                            # Don't requeue on error, just skip
                 
-                # Show any formulas that couldn't be processed
                 if formulas_to_process:
                     st.warning(f"⚠️ Could not process {len(formulas_to_process)} formulas due to dependency issues")
                     for formula in formulas_to_process:
@@ -859,17 +796,14 @@ def main():
     
     st.markdown("---")
     
-    # Add test interface at the top
     test_formulas_interface()
     
     st.markdown("---")
     
-    # Check prerequisites
     has_mappings = 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping
     has_formulas = 'formulas' in st.session_state and st.session_state.formulas
     has_data = 'excel_df' in st.session_state and st.session_state.excel_df is not None
     
-    # Upload section if missing
     if not has_mappings or not has_formulas:
         st.warning("⚠️ Missing configuration files")
         
@@ -918,7 +852,6 @@ def main():
     
     st.markdown("---")
     
-    # Data file handling
     if not has_data:
         st.warning("⚠️ No data file loaded")
         uploaded_data = st.file_uploader("Upload Data File", type=['csv', 'xlsx', 'xls', 'json'])
@@ -949,7 +882,6 @@ def main():
     
     st.markdown("---")
     
-    # Options
     include_derived = st.checkbox("Include derived formulas", value=True, 
                                   help="Automatically include standard derived calculations")
     
@@ -961,7 +893,6 @@ def main():
     
     st.markdown("---")
     
-    # Run calculations
     col1, col2 = st.columns([1, 3])
     with col1:
         if st.button("▶️ Run Calculations", type="primary", use_container_width=True):
@@ -991,7 +922,6 @@ def main():
                 del st.session_state.calc_results
             st.rerun()
     
-    # Display results
     if 'results_df' in st.session_state and st.session_state.results_df is not None:
         st.markdown("---")
         st.subheader("✅ Results")
@@ -1020,7 +950,6 @@ def main():
         
         st.dataframe(st.session_state.results_df, use_container_width=True, height=400)
         
-        # Export
         from io import BytesIO
         col1, col2 = st.columns(2)
         
