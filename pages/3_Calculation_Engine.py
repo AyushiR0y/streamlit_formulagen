@@ -222,9 +222,11 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
 def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str], is_pre_mapped: bool = False) -> Any:
     """
     Calculate formula result for a single row.
+    HYBRID LOGIC: Handles [Bracketed Headers], Existing Columns, and Standard Variables.
     """
     var_values = {}
     
+    # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
     bracketed_headers = set()
     if is_pre_mapped:
         pattern = r'\[([^\]]+)\]'
@@ -246,22 +248,53 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             else:
                 var_values[f"[{header_name}]"] = 0.0
 
-    clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
-    clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
+    # 2. IDENTIFY Potential Variables
+    potential_vars = set()
+    
+    # A) FIX: Extract variables inside MONTHS_BETWEEN first
+    if 'MONTHS_BETWEEN' in formula_expr.upper():
+        pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
+        matches = re.findall(pattern, formula_expr, flags=re.IGNORECASE)
+        for match in matches:
+            # Extract words from arguments (e.g., "VAR1", "VAR2" from "VAR1, VAR2")
+            v1 = re.findall(r'\b\w+\b', match[0])
+            v2 = re.findall(r'\b\w+\b', match[1])
+            potential_vars.update(v1)
+            potential_vars.update(v2)
+            
+    # B) FIX: Extract variables inside ADD_MONTHS
+    if 'ADD_MONTHS' in formula_expr.upper():
+        pattern = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
+        matches = re.findall(pattern, formula_expr, flags=re.IGNORECASE)
+        for match in matches:
+            v1 = re.findall(r'\b\w+\b', match[0])
+            v2 = re.findall(r'\b\w+\b', match[1])
+            potential_vars.update(v1)
+            potential_vars.update(v2)
+
+    # C) Find remaining variables in the cleaned expression
+    # We remove functions first to avoid matching function names or internal operators
+    clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', formula_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
+    clean_expr = re.sub(r'\[[^\]]+\]', '', clean_expr)
     
-    potential_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
+    other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
+    potential_vars.update(other_vars)
     
-    python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float'}
+    # Filter out Python keywords and specific function names
+    python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 'CURRENT_DATE'}
     potential_vars = potential_vars - python_keywords
     
+    # 3. POPULATE var_values with found variables
     var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
     
     for var_name in potential_vars:
+        # A) Check if it's an existing column (e.g. 'no_of_premium_paid' calculated earlier)
         if var_name in row.index:
             var_values[var_name] = row[var_name]
             continue
         
+        # B) Check if it maps via header_to_var_mapping
         mapped_header = None
         
         if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
@@ -273,6 +306,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             if mapped_header in row.index:
                 var_values[var_name] = row[mapped_header]
             else:
+                # Case-insensitive match
                 for col in row.index:
                     if col.lower() == str(mapped_header).lower():
                         var_values[var_name] = row[col]
