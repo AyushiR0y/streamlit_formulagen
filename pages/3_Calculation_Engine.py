@@ -541,7 +541,26 @@ def debug_single_row_calculation(
     # Create a single-row dataframe
     # ----------------------------
     base_df = pd.DataFrame([input_values])
-    working_df = base_df.copy()
+    # ---------------------------------------
+    # Overwrite rule:
+    # - If user entered a NON-ZERO value → keep it
+    # - If value is missing OR zero → overwrite with calculated result
+    # ---------------------------------------
+
+    existing_val = working_df.at[0, formula_name] if formula_name in working_df.columns else None
+
+    should_overwrite = (
+        existing_val is None
+        or pd.isna(existing_val)
+        or safe_convert_to_number(existing_val) == 0
+    )
+
+    if should_overwrite:
+        working_df[formula_name] = result
+        st.info(f"✏️ `{formula_name}` updated → {result}")
+    else:
+        st.success(f"🔒 `{formula_name}` preserved (manual value = {existing_val})")
+
 
     st.write("### ▶️ Initial Input Row")
     st.dataframe(working_df)
