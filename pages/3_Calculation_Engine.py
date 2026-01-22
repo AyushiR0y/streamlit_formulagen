@@ -536,17 +536,6 @@ def get_smart_default_value(var_name: str):
     
     # Default numeric value
     return 1000.0
-    
-    # Term variables
-    if 'TERM' in var_upper:
-        return 10
-    
-    # ROP (Return of Premium) variables
-    if 'ROP' in var_upper:
-        return 200000.0
-    
-    # Default numeric
-    return 100.0
 
 def test_formulas_interface():
     """Create an interface to test formulas with manual inputs"""
@@ -577,7 +566,10 @@ def test_formulas_interface():
                     elif 'TERM' in var.upper() and var != 'FUP_Date':
                         input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1)
                     else:
-                        input_values[var] = st.date_input(var, value=default_value)
+                        # Ensure we have a numeric value for non-date variables
+                        if isinstance(default_value, date):
+                            default_value = 1000.0  # Safe fallback
+                        input_values[var] = st.number_input(var, value=default_value, min_value=0.0)
             
             # Bracketed variables from formulas
             if formula_vars['bracketed']:
@@ -595,7 +587,7 @@ def test_formulas_interface():
                     else:
                         # Ensure numeric default for number_input
                         if isinstance(default_value, date):
-                            default_value = default_value.year  # Convert date to numeric
+                            default_value = 1000.0  # Safe fallback for numeric
                         input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
             
             # Plain variables from formulas
