@@ -259,18 +259,13 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
 
     # 2. IDENTIFY Potential Variables (Non-bracketed tokens)
     clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
+    clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
+    clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     
-    # ✅ DO NOT delete MONTHS_BETWEEN or ADD_MONTHS. 
-    # We need the arguments (variables) inside them!
+    potential_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
     
-    # ✅ Also add these keywords to the list so they don't appear as variables
-    python_keywords = {
-        'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float',
-        'MONTHS', 'BETWEEN', 'ADD'  # Add these
-    }
-    
-    tokens = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
-    tokens = tokens - python_keywords
+    python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float'}
+    potential_vars = potential_vars - python_keywords
     
     # 3. POPULATE var_values with found variables
     # FIX: Build both mappings to handle both directions
@@ -526,139 +521,6 @@ def import_formulas_from_json(json_file) -> List[Dict]:
         
     except Exception as e:
         raise ValueError(f"Error reading JSON: {str(e)}")
-# ============================================================
-# 🔬 SINGLE ROW FORMULA DEBUGGER
-# ============================================================
-def is_probable_date_field(name: str) -> bool:
-    name = name.upper()
-    return any(token in name for token in ["DATE", "DT", "START", "END"])
-
-def debug_single_row_calculation(
-    input_values: Dict[str, Any],
-    formulas: List[Dict],
-    include_derived: bool = True
-):
-    """
-    Runs all formulas sequentially on a single synthetic row
-    with full debugging visibility.
-    """
-
-    st.subheader("🧪 Single Row Formula Debugger")
-
-    # ----------------------------
-    # Create a single-row dataframe
-    # FIX: Initialize working_df here directly
-    # ----------------------------
-    working_df = pd.DataFrame([input_values])
-
-    st.write("### ▶️ Initial Input Row")
-    st.dataframe(working_df)
-
-    # ----------------------------
-    # Build execution list
-    # Derived → Input formulas
-    # ----------------------------
-    all_formulas = []
-
-    if include_derived:
-        derived = get_derived_formulas()
-        for f in derived:
-            f["is_pre_mapped"] = False
-        all_formulas.extend(derived)
-
-    all_formulas.extend(formulas)
-    st.info(f"Running {len(all_formulas)} formulas sequentially")
-
-    # ----------------------------
-    # Execute formulas one-by-one
-    # ----------------------------
-        # ----------------------------
-    # Execute formulas one-by-one
-    # ----------------------------
-    for idx, formula in enumerate(all_formulas, start=1):
-
-        formula_name = formula["formula_name"]
-        formula_expr = formula["formula_expression"]
-        is_pre_mapped = formula.get("is_pre_mapped", False)
-
-        st.markdown("---")
-        st.markdown(f"## 🔢 Step {idx}: `{formula_name}`")
-        st.code(formula_expr)
-
-        row = working_df.iloc[0]
-
-        # ----------------------------
-        # Collect variable values
-        # ----------------------------
-        var_values = {}
-
-        # Bracketed headers
-        if is_pre_mapped:
-            headers = re.findall(r'\[([^\]]+)\]', formula_expr)
-            for h in headers:
-                if h in row.index:
-                    var_values[f"[{h}]"] = row[h]
-                else:
-                    var_values[f"[{h}]"] = 0
-
-        # Non-bracket variables
-        clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
-        clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
-        clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
-
-        tokens = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
-        python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float'}
-        tokens = tokens - python_keywords
-
-        for token in tokens:
-            if token in row.index:
-                var_values[token] = row[token]
-
-        st.write("### 📥 Resolved Variables")
-        st.json(var_values)
-
-        # ----------------------------
-        # Execute calculation
-        # ----------------------------
-        try:
-            result = safe_eval(formula_expr, var_values)
-        except Exception as e:
-            result = None
-            st.error(f"Execution error: {e}")
-
-        st.write("### ✅ Result")
-        st.write(result)
-
-        # ----------------------------
-        # Persist result so next formulas can use it
-        # FIX: This logic was previously outside the loop and broken.
-        # It checks if the user provided a manual value. If not, it updates the row.
-        # ----------------------------
-        existing_val = (
-            working_df.at[0, formula_name]
-            if formula_name in working_df.columns
-            else None
-        )
-
-        # If no value exists OR value is 0/NaN, overwrite with calculation
-        should_overwrite = (
-            existing_val is None
-            or pd.isna(existing_val)
-            or safe_convert_to_number(existing_val) == 0
-        )
-
-        if should_overwrite:
-            working_df[formula_name] = result
-            st.info(f"✏️ `{formula_name}` updated → {result}")
-        else:
-            # If user provided a non-zero value in inputs, keep it
-            st.success(f"🔒 `{formula_name}` preserved (manual value = {existing_val})")
-
-        st.write("### 📊 Row State After Calculation")
-        st.dataframe(working_df)
-
-    st.success("🎯 Debug run completed")
-    return working_df
 
 # --- Main App ---
 def main():
@@ -774,72 +636,7 @@ def main():
                 st.code(info['formula'])
     
     st.markdown("---")
-    # ============================================================
-    # 🧪 SINGLE ROW TEST PANEL
-    # ============================================================
-
-    st.markdown("---")
-    st.subheader("🧪 Test Formulas On Single Row")
-
-    with st.expander("Enter Test Values", expanded=True):
-
-        sample_inputs = {}
-
-        # -------------------------------------------------------
-
-
-        all_formula_text = ""
-
-        # Mapped formulas
-        all_formula_text += " ".join(
-            f.get("formula_expression", "") for f in st.session_state.formulas
-        )
-
-        # Derived formulas
-        for f in get_derived_formulas():
-            all_formula_text += " " + f.get("formula_expression", "")
-
-        # Extract [BRACKETED] headers
-        variables = set(re.findall(r'\[([^\]]+)\]', all_formula_text))
-
-        # Extract normal variables
-        variables |= set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', all_formula_text))
-
-        # Remove function names / noise
-        blacklist = {
-            "MAX", "MIN", "ABS", "ROUND",
-            "MONTHS_BETWEEN", "ADD_MONTHS",
-            "CURRENT_DATE", "pow", "math",
-            "sum", "int", "float"
-        }
-
-
-
-        variables = sorted(v for v in variables if v.upper() not in blacklist)
-
-        cols = st.columns(3)
-        for idx, var in enumerate(variables):
-            with cols[idx % 3]:
-                if is_probable_date_field(var):
-                    sample_inputs[var] = st.date_input(var, value=date.today())
-                else:
-                    sample_inputs[var] = st.text_input(var, value="0")
-
-
-        # Convert numeric inputs
-        for k, v in sample_inputs.items():
-            try:
-                sample_inputs[k] = float(v)
-            except:
-                pass
-
-        if st.button("▶️ Run Single Row Debug", type="primary"):
-            debug_single_row_calculation(
-                input_values=sample_inputs,
-                formulas=st.session_state.formulas,
-                include_derived=True
-            )
-
+    
     # Run calculations
     col1, col2 = st.columns([1, 3])
     with col1:
