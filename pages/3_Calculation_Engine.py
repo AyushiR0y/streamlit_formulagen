@@ -332,36 +332,90 @@ def find_matching_column(formula_name: str, df_columns: List[str], header_to_var
         return best_match
     
     return formula_name
-# Add this function after the import_formulas_from_json function (around line 450)
-
-def test_formula_interactive(formula: Dict, test_values: Dict[str, Any], header_to_var_mapping: Dict[str, str]) -> Dict[str, Any]:
+def extract_variables_from_formula_list(formulas: List[Dict]) -> Set[str]:
     """
-    Test a single formula with user-provided values and show step-by-step evaluation
+    Extract all unique variables needed from a list of formulas.
+    Returns only the input variables (not the calculated ones).
     """
-    formula_name = formula.get('formula_name', 'Unknown')
-    formula_expr = formula.get('formula_expression', '')
-    is_pre_mapped = formula.get('is_pre_mapped', False)
+    all_variables = set()
+    calculated_vars = set()  # Variables that are outputs of formulas
     
-    # Create a test row from input values
-    test_row = pd.Series(test_values)
+    for formula in formulas:
+        # Track what this formula calculates
+        formula_name = formula.get('formula_name', '')
+        if formula_name:
+            calculated_vars.add(formula_name)
+        
+        # Extract from mapped_expression (preferred) or formula_expression
+        expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
+        
+        # Remove assignment operators to get the RHS
+        if '=' in expr:
+            expr = expr.split('=')[-1]
+        
+        # Extract bracketed headers [HEADER_NAME]
+        bracketed = re.findall(r'\[([^\]]+)\]', expr)
+        all_variables.update(bracketed)
+        
+        # Extract unbracketed variables
+        clean_expr = re.sub(r'\[[^\]]+\]', '', expr)
+        vars_found = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr)
+        
+        # Filter out Python keywords and functions
+        keywords = {'MAX', 'MIN', 'SUM', 'AVG', 'ROUND', 'ABS', 'POWER', 'SQRT', 
+                   'IF', 'THEN', 'ELSE', 'max', 'min', 'abs', 'round', 'sum', 'pow',
+                   'MONTHS_BETWEEN', 'ADD_MONTHS', 'CURRENT_DATE'}
+        
+        vars_found = [v for v in vars_found if v.upper() not in keywords]
+        all_variables.update(vars_found)
+    
+    # Remove variables that are calculated by formulas (keep only inputs)
+    input_variables = all_variables - calculated_vars
+    
+    # Add variables from derived formulas
+    for name, info in BASIC_DERIVED_FORMULAS.items():
+        input_variables.update(info['variables'])
+    
+    return sorted(input_variables)
+
+
+def test_formula_interactive(formula: Dict, test_values: Dict[str, Any], 
+                            header_to_var_mapping: Dict[str, str],
+                            calculated_values: Dict[str, Any] = None) -> Dict[str, Any]:
+    """
+    Test a single formula with user-provided values and show step-by-step evaluation.
+    calculated_values: Results from previously calculated formulas
+    """
+    if calculated_values is None:
+        calculated_values = {}
+    
+    formula_name = formula.get('formula_name', 'Unknown')
+    
+    # Prefer mapped_expression over formula_expression
+    formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
+    is_pre_mapped = bool(formula.get('mapped_expression'))
     
     # Track evaluation steps
     evaluation_log = []
+    
+    # Combine test values with calculated values
+    all_values = {**test_values, **calculated_values}
     
     # Build variable context
     var_values = {}
     
     # 1. Extract bracketed headers
-    if is_pre_mapped:
-        pattern = r'\[([^\]]+)\]'
-        headers_in_formula = re.findall(pattern, formula_expr)
-        evaluation_log.append(f"📋 **Pre-mapped mode**: Found {len(headers_in_formula)} bracketed headers")
+    pattern = r'\[([^\]]+)\]'
+    headers_in_formula = re.findall(pattern, formula_expr)
+    
+    if headers_in_formula:
+        evaluation_log.append(f"📋 **Bracketed headers found**: {len(headers_in_formula)}")
         
         for header_name in headers_in_formula:
-            val = test_values.get(header_name, None)
+            val = all_values.get(header_name, None)
             if val is None:
                 # Try case-insensitive match
-                for k, v in test_values.items():
+                for k, v in all_values.items():
                     if k.lower() == header_name.lower():
                         val = v
                         break
@@ -369,7 +423,7 @@ def test_formula_interactive(formula: Dict, test_values: Dict[str, Any], header_
             var_values[f"[{header_name}]"] = val if val is not None else 0.0
             evaluation_log.append(f"  ├─ `[{header_name}]` = {var_values[f'[{header_name}]']}")
     
-    # 2. Extract variables
+    # 2. Extract variables (non-bracketed)
     clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
     clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
@@ -388,19 +442,23 @@ def test_formula_interactive(formula: Dict, test_values: Dict[str, Any], header_
         val = None
         source = ""
         
-        # A) Direct value
-        if var_name in test_values:
+        # Priority 1: Calculated values (from previous formulas)
+        if var_name in calculated_values:
+            val = calculated_values[var_name]
+            source = "✨ Calculated (previous formula)"
+        # Priority 2: Direct test input
+        elif var_name in test_values:
             val = test_values[var_name]
-            source = "Direct input"
-        # B) Check mapping
+            source = "📝 Direct input"
+        # Priority 3: Mapped value
         elif var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
             mapped_header = header_to_var_mapping[var_name]
-            val = test_values.get(mapped_header, 0.0)
-            source = f"Mapped from [{mapped_header}]"
+            val = all_values.get(mapped_header, 0.0)
+            source = f"🔗 Mapped from [{mapped_header}]"
         elif var_name in var_to_header_mapping:
             mapped_header = var_to_header_mapping[var_name]
-            val = test_values.get(mapped_header, 0.0)
-            source = f"Mapped from [{mapped_header}]"
+            val = all_values.get(mapped_header, 0.0)
+            source = f"🔗 Mapped from [{mapped_header}]"
         else:
             val = 0.0
             source = "⚠️ Not found - defaulting to 0"
@@ -747,70 +805,81 @@ def main():
     st.markdown("Test formulas with custom values for a single policy before running full calculations.")
     
     with st.expander("🔬 Interactive Formula Tester", expanded=False):
-        st.markdown("#### Step 1: Input Test Values")
+        st.markdown("#### Step 1: Input Required Variables")
         
-        # Get all variables that might be needed
-        all_vars = set()
+        # Extract ONLY input variables from formulas
+        input_vars = extract_variables_from_formula_list(st.session_state.formulas)
         
-        # From mappings
-        all_vars.update(st.session_state.header_to_var_mapping.keys())
-        all_vars.update(st.session_state.header_to_var_mapping.values())
+        st.info(f"📊 **{len(input_vars)} input variables** required for your formulas")
         
-        # From formulas
-        for formula in st.session_state.formulas:
-            expr = formula.get('formula_expression', '')
-            # Extract bracketed headers
-            bracketed = re.findall(r'\[([^\]]+)\]', expr)
-            all_vars.update(bracketed)
-            # Extract variables
-            vars_in_expr = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', expr)
-            all_vars.update(vars_in_expr)
+        # Show which formulas will be calculated
+        with st.expander("📋 Formula Execution Order"):
+            st.markdown("**1️⃣ Derived Formulas (run first):**")
+            for name in BASIC_DERIVED_FORMULAS.keys():
+                st.write(f"   • {name}")
+            
+            st.markdown("**2️⃣ User Formulas (run in order, can use derived values):**")
+            for formula in st.session_state.formulas:
+                fname = formula.get('formula_name', 'Unknown')
+                st.write(f"   • {fname}")
         
-        # From derived formulas
-        for name, info in BASIC_DERIVED_FORMULAS.items():
-            all_vars.update(info['variables'])
-            all_vars.add(name)
+        # Create input form with better organization
+        st.markdown("**Enter test values:**")
         
-        # Filter out keywords
-        keywords = {'MAX', 'MIN', 'SUM', 'AVG', 'ROUND', 'ABS', 'POWER', 'SQRT', 'IF', 'THEN', 'ELSE'}
-        all_vars = sorted([v for v in all_vars if v and v.upper() not in keywords])
-        
-        # Create input form
-        st.markdown("**Enter values for variables:**")
-        
-        col1, col2 = st.columns(2)
+        # Group variables by type
+        date_vars = [v for v in input_vars if any(kw in v.upper() for kw in ['DATE', 'DT'])]
+        numeric_vars = [v for v in input_vars if v not in date_vars]
         
         test_values = {}
         
-        # Split variables into two columns for better layout
-        mid_point = len(all_vars) // 2
+        # Date inputs
+        if date_vars:
+            st.markdown("##### 📅 Date Variables")
+            col1, col2 = st.columns(2)
+            
+            for idx, var in enumerate(date_vars):
+                with (col1 if idx % 2 == 0 else col2):
+                    test_values[var] = st.date_input(
+                        f"{var}", 
+                        value=datetime.now().date(), 
+                        key=f"test_{var}",
+                        help=f"Input value for {var}"
+                    )
         
-        with col1:
-            for var in all_vars[:mid_point]:
-                # Try to infer input type
-                if any(keyword in var.upper() for keyword in ['DATE', 'DT']):
-                    test_values[var] = st.date_input(f"{var}", value=datetime.now().date(), key=f"test_{var}")
-                elif any(keyword in var.upper() for keyword in ['TERM', 'YEAR', 'YR', 'AGE', 'FREQUENCY']):
-                    test_values[var] = st.number_input(f"{var}", value=0, step=1, key=f"test_{var}")
-                else:
-                    test_values[var] = st.number_input(f"{var}", value=0.0, step=0.01, format="%.2f", key=f"test_{var}")
-        
-        with col2:
-            for var in all_vars[mid_point:]:
-                if any(keyword in var.upper() for keyword in ['DATE', 'DT']):
-                    test_values[var] = st.date_input(f"{var}", value=datetime.now().date(), key=f"test_{var}")
-                elif any(keyword in var.upper() for keyword in ['TERM', 'YEAR', 'YR', 'AGE', 'FREQUENCY']):
-                    test_values[var] = st.number_input(f"{var}", value=0, step=1, key=f"test_{var}")
-                else:
-                    test_values[var] = st.number_input(f"{var}", value=0.0, step=0.01, format="%.2f", key=f"test_{var}")
+        # Numeric inputs
+        if numeric_vars:
+            st.markdown("##### 🔢 Numeric Variables")
+            col1, col2 = st.columns(2)
+            
+            for idx, var in enumerate(numeric_vars):
+                with (col1 if idx % 2 == 0 else col2):
+                    # Determine if integer or decimal
+                    if any(kw in var.upper() for kw in ['TERM', 'YEAR', 'YR', 'AGE', 'FREQUENCY', 'COUNT']):
+                        test_values[var] = st.number_input(
+                            f"{var}", 
+                            value=0, 
+                            step=1, 
+                            key=f"test_{var}",
+                            help=f"Input value for {var}"
+                        )
+                    else:
+                        test_values[var] = st.number_input(
+                            f"{var}", 
+                            value=0.0, 
+                            step=0.01, 
+                            format="%.2f", 
+                            key=f"test_{var}",
+                            help=f"Input value for {var}"
+                        )
         
         st.markdown("---")
-        st.markdown("#### Step 2: Test Formulas")
+        st.markdown("#### Step 2: Formula Evaluation Results")
         
-        # Test derived formulas first
+        # Dictionary to store all calculated values
+        calculated_values = {}
+        
+        # TEST DERIVED FORMULAS FIRST
         st.markdown("##### 🔧 Derived Formulas")
-        
-        derived_results = {}
         
         for name, info in BASIC_DERIVED_FORMULAS.items():
             test_formula = {
@@ -819,20 +888,25 @@ def main():
                 'is_pre_mapped': False
             }
             
-            # Add previously calculated derived values to test_values
-            current_test_values = {**test_values, **derived_results}
-            
-            result = test_formula_interactive(test_formula, current_test_values, st.session_state.header_to_var_mapping)
+            result = test_formula_interactive(
+                test_formula, 
+                test_values, 
+                st.session_state.header_to_var_mapping,
+                calculated_values
+            )
             
             with st.container():
                 if result['success']:
-                    st.success(f"✅ **{name}** = {result['result']}")
-                    derived_results[name] = result['result']
+                    st.success(f"✅ **{name}** = `{result['result']}`")
+                    # Store for use in subsequent formulas
+                    calculated_values[name] = result['result']
                 else:
                     st.error(f"❌ **{name}** - Failed")
                 
                 with st.expander(f"📋 Details: {name}"):
+                    st.markdown(f"**Description**: {info['description']}")
                     st.code(info['formula'], language="python")
+                    st.markdown("**Evaluation Log:**")
                     for log_entry in result['log']:
                         st.markdown(log_entry)
                     if result['error']:
@@ -841,27 +915,31 @@ def main():
         st.markdown("---")
         st.markdown("##### 📐 User Formulas")
         
-        # Test user formulas
+        formula_results = []
+        
+        # TEST USER FORMULAS (can use derived values)
         for idx, formula in enumerate(st.session_state.formulas):
-            # Include derived results
-            current_test_values = {**test_values, **derived_results}
-            
-            result = test_formula_interactive(formula, current_test_values, st.session_state.header_to_var_mapping)
+            result = test_formula_interactive(
+                formula, 
+                test_values, 
+                st.session_state.header_to_var_mapping,
+                calculated_values
+            )
             
             formula_name = formula.get('formula_name', f'Formula {idx+1}')
-            formula_expr = formula.get('formula_expression', '')
+            formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
             
             with st.container():
                 if result['success']:
-                    st.success(f"✅ **{formula_name}** = {result['result']}")
+                    st.success(f"✅ **{formula_name}** = `{result['result']}`")
+                    # Store for use in subsequent formulas
+                    calculated_values[formula_name] = result['result']
                 else:
                     st.error(f"❌ **{formula_name}** - Failed")
                 
                 with st.expander(f"📋 Details: {formula_name}"):
                     st.code(formula_expr, language="python")
-                    st.markdown(f"**Description**: {formula.get('description', 'N/A')}")
-                    st.markdown(f"**Variables**: {formula.get('variables_used', 'N/A')}")
-                    st.markdown(f"**Pre-mapped**: {formula.get('is_pre_mapped', False)}")
+                    st.markdown(f"**Original**: {formula.get('original_expression', 'N/A')}")
                     
                     st.markdown("**Evaluation Log:**")
                     for log_entry in result['log']:
@@ -869,32 +947,67 @@ def main():
                     
                     if result['error']:
                         st.error(f"**Error**: {result['error']}")
+            
+            formula_results.append({
+                'formula_name': formula_name,
+                'result': result['result'],
+                'success': result['success'],
+                'error': result['error']
+            })
+        
+        # Summary Table
+        st.markdown("---")
+        st.markdown("#### 📊 Results Summary")
+        
+        summary_data = []
+        
+        # Add derived formulas
+        for name, info in BASIC_DERIVED_FORMULAS.items():
+            summary_data.append({
+                'Formula': name,
+                'Type': 'Derived',
+                'Result': calculated_values.get(name, 'N/A'),
+                'Status': '✅' if name in calculated_values else '❌'
+            })
+        
+        # Add user formulas
+        for fr in formula_results:
+            summary_data.append({
+                'Formula': fr['formula_name'],
+                'Type': 'User',
+                'Result': fr['result'] if fr['success'] else 'Error',
+                'Status': '✅' if fr['success'] else '❌'
+            })
+        
+        summary_df = pd.DataFrame(summary_data)
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
         
         # Export test results
         st.markdown("---")
-        if st.button("📥 Export Test Results as JSON"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
             export_data = {
                 'test_values': {k: str(v) for k, v in test_values.items()},
-                'derived_results': derived_results,
-                'formula_results': []
+                'derived_results': {k: v for k, v in calculated_values.items() if k in BASIC_DERIVED_FORMULAS},
+                'formula_results': formula_results
             }
             
-            for formula in st.session_state.formulas:
-                current_test_values = {**test_values, **derived_results}
-                result = test_formula_interactive(formula, current_test_values, st.session_state.header_to_var_mapping)
-                
-                export_data['formula_results'].append({
-                    'formula_name': formula.get('formula_name'),
-                    'result': result['result'],
-                    'success': result['success'],
-                    'error': result['error']
-                })
-            
             st.download_button(
-                label="📥 Download Test Results",
-                data=json.dumps(export_data, indent=2),
+                label="📥 Download Test Results (JSON)",
+                data=json.dumps(export_data, indent=2, default=str),
                 file_name="formula_test_results.json",
                 mime="application/json"
+            )
+        
+        with col2:
+            # Export as CSV
+            csv_data = summary_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Summary (CSV)",
+                data=csv_data,
+                file_name="formula_test_summary.csv",
+                mime="text/csv"
             )
     # Run calculations
     col1, col2 = st.columns([1, 3])
