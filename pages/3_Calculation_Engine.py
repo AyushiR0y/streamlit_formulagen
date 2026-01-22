@@ -260,10 +260,17 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     # 2. IDENTIFY Potential Variables (Non-bracketed tokens)
     clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
     
-    potential_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
+    # ✅ DO NOT delete MONTHS_BETWEEN or ADD_MONTHS. 
+    # We need the arguments (variables) inside them!
     
-    python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float'}
-    potential_vars = potential_vars - python_keywords
+    # ✅ Also add these keywords to the list so they don't appear as variables
+    python_keywords = {
+        'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float',
+        'MONTHS', 'BETWEEN', 'ADD'  # Add these
+    }
+    
+    tokens = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
+    tokens = tokens - python_keywords
     
     # 3. POPULATE var_values with found variables
     # FIX: Build both mappings to handle both directions
