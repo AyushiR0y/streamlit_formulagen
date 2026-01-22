@@ -563,7 +563,7 @@ def test_formulas_interface():
                     if 'DATE' in var.upper():
                         input_values[var] = st.date_input(var, value=default_value)
                     elif 'TERM' in var.upper() and var != 'FUP_Date':
-                        input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1.0) # Fixed min_value type
+                        input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1.0)
                     else:
                         input_values[var] = st.date_input(var, value=default_value)
             
@@ -576,7 +576,8 @@ def test_formulas_interface():
                     if 'DATE' in var.upper():
                         input_values[var] = st.date_input(f"{clean_var}", value=default_value)
                     elif 'FACTOR' in var.upper():
-                        input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, max_value=1.0, step=0.01)
+                        # FIX: Removed max_value=1.0. Factors can be greater than 1.
+                        input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, step=0.01)
                     elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
                         input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
                     else:
@@ -594,7 +595,8 @@ def test_formulas_interface():
                         if 'DATE' in var.upper():
                             input_values[var] = st.date_input(f"{clean_var}", value=default_value)
                         elif 'FACTOR' in var.upper():
-                            input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, max_value=1.0, step=0.01)
+                            # FIX: Removed max_value=1.0. Factors can be greater than 1.
+                            input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, step=0.01)
                         elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
                             input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
                         else:
