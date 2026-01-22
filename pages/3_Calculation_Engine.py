@@ -36,12 +36,13 @@ class CalculationResult:
 BASIC_DERIVED_FORMULAS = {
     'no_of_premium_paid': {
         'description': 'Number of years of premiums paid (FUP_Date - TERM_START_DATE) / 12',
-        'formula': 'MONTHS_BETWEEN(TERM_START_DATE, FUP_Date) / 12',
+        # FIX: Wrapped in int() to return a whole number and ignore decimals
+        'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, FUP_Date) / 12)', 
         'variables': ['FUP_Date', 'TERM_START_DATE']
     },
     'policy_year': {
         'description': 'Policy year based on term start and surrender date',
-        'formula': 'MONTHS_BETWEEN(TERM_START_DATE, DATE_OF_SURRENDER) / 12 + 1',
+        'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, DATE_OF_SURRENDER) / 12 + 1)', # Also applied int() here for consistency
         'variables': ['DATE_OF_SURRENDER', 'TERM_START_DATE']
     },
     'maturity_date': {
@@ -51,7 +52,7 @@ BASIC_DERIVED_FORMULAS = {
     },
     'Elapsed_policy_duration': {
         'description': 'Years elapsed since policy start',
-        'formula': 'MONTHS_BETWEEN(TERM_START_DATE, CURRENT_DATE) / 12',
+        'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, CURRENT_DATE) / 12)', # Also applied int() here
         'variables': ['TERM_START_DATE']
     }
 }
