@@ -1,0 +1,67 @@
+[
+  {
+    "formula_name": "TOTAL_PREMIUM_PAID",
+    "original_expression": "FULL_TERM_PREMIUM * no_of_premium_paid",
+    "mapped_expression": "[FULL_TERM_PREMIUM] * no_of_premium_paid"
+  },
+  {
+    "formula_name": "TEN_TIMES_AP",
+    "original_expression": "10 * FULL_TERM_PREMIUM",
+    "mapped_expression": "10 * [FULL_TERM_PREMIUM]"
+  },
+  {
+    "formula_name": "ONE_OH_FIVE_PERCENT_TOTAL_PREMIUM",
+    "original_expression": "1.05 * FULL_TERM_PREMIUM * no_of_premium_paid",
+    "mapped_expression": "1.05 * [FULL_TERM_PREMIUM] * no_of_premium_paid"
+  },
+  {
+    "formula_name": "SUM_ASSURED_ON_DEATH",
+    "original_expression": "MAX(SUM_ASSURED, 10 * FULL_TERM_PREMIUM, 105% * TOTAL_PREMIUM_PAID)",
+    "mapped_expression": "MAX([SUM_ASSURED], 10 * [FULL_TERM_PREMIUM], 105% * TOTAL_PREMIUM_PAID)"
+  },
+  {
+    "formula_name": "GSV",
+    "original_expression": "GSV_FACTOR * TOTAL_PREMIUM_PAID",
+    "mapped_expression": "[GSV2_FACTOR] * TOTAL_PREMIUM_PAID"
+  },
+  {
+    "formula_name": "PAID_UP_SA",
+    "original_expression": "SUM_ASSURED * (no_of_premium_paid / PREMIUM_TERM)",
+    "mapped_expression": "[SUM_ASSURED] * (no_of_premium_paid / [PREMIUM_TERM])"
+  },
+  {
+    "formula_name": "PAID_UP_SA_ON_DEATH",
+    "original_expression": "SUM_ASSURED_ON_DEATH * (no_of_premium_paid / PREMIUM_TERM)",
+    "mapped_expression": "SUM_ASSURED_ON_DEATH * (no_of_premium_paid / [PREMIUM_TERM])"
+  },
+  {
+    "formula_name": "PAID_UP_INCOME_BENEFIT_AMOUNT",
+    "original_expression": "paid_up_income_benefit_amount = Income_Benefit_Amount * (no_of_premium_paid / FULL_TERM_PREMIUM)",
+    "mapped_expression": "paid_up_income_benefit_amount = Income_Benefit_Amount * (no_of_premium_paid / [FULL_TERM_PREMIUM])"
+  },
+  {
+    "formula_name": "SSV1",
+    "original_expression": "Present_Value_of_paid_up_sum_assured_on_death * SSV1_FACTOR",
+    "mapped_expression": "Present_Value_of_paid_up_sum_assured_on_death * [SV_FACTOR]"
+  },
+  {
+    "formula_name": "SSV2",
+    "original_expression": "ROP_BENEFIT * SSV2_FACTOR",
+    "mapped_expression": "ROP_BENEFIT * [SSV2_FACTOR]"
+  },
+  {
+    "formula_name": "SSV3",
+    "original_expression": "PAID_UP_INCOME_INSTALMENT * SSV3_FACTOR",
+    "mapped_expression": "PAID_UP_INCOME_INSTALMENT * [SSV3_FACTOR]"
+  },
+  {
+    "formula_name": "SSV",
+    "original_expression": "SSV = SSV1 + SSV2 + SSV3",
+    "mapped_expression": "[SSV] = [SSV1_AMT] + [SSV2_AMT] + [SSV3_AMT]"
+  },
+  {
+    "formula_name": "SURRENDER_PAID_AMOUNT",
+    "original_expression": "MAX(GSV_FACTOR * FULL_TERM_PREMIUM * no_of_premium_paid, SSV1_FACTOR * SUM_ASSURED_ON_DEATH + SSV2_FACTOR * ROP_Benefit + SSV3_FACTOR * Income_Benefit_Amount)",
+    "mapped_expression": "MAX([GSV2_FACTOR] * [FULL_TERM_PREMIUM] * no_of_premium_paid, [SV_FACTOR] * SUM_ASSURED_ON_DEATH + [SSV2_FACTOR] * ROP_Benefit + [SSV3_FACTOR] * Income_Benefit_Amount)"
+  }
+]
