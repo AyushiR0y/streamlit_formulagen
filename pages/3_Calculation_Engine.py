@@ -524,6 +524,9 @@ def import_formulas_from_json(json_file) -> List[Dict]:
 # ============================================================
 # 🔬 SINGLE ROW FORMULA DEBUGGER
 # ============================================================
+def is_probable_date_field(name: str) -> bool:
+    name = name.upper()
+    return any(token in name for token in ["DATE", "DT", "START", "END"])
 
 def debug_single_row_calculation(
     input_values: Dict[str, Any],
@@ -774,25 +777,46 @@ def main():
 
         sample_inputs = {}
 
-        # Auto-create inputs from known variables in formulas
-        all_formula_text = " ".join(
+        # -------------------------------------------------------
+
+
+        all_formula_text = ""
+
+        # Mapped formulas
+        all_formula_text += " ".join(
             f.get("formula_expression", "") for f in st.session_state.formulas
         )
 
+        # Derived formulas
+        for f in get_derived_formulas():
+            all_formula_text += " " + f.get("formula_expression", "")
+
+        # Extract [BRACKETED] headers
         variables = set(re.findall(r'\[([^\]]+)\]', all_formula_text))
+
+        # Extract normal variables
         variables |= set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', all_formula_text))
 
+        # Remove function names / noise
         blacklist = {
-            "MAX", "MIN", "ABS", "ROUND", "MONTHS_BETWEEN",
-            "ADD_MONTHS", "CURRENT_DATE", "pow", "math"
+            "MAX", "MIN", "ABS", "ROUND",
+            "MONTHS_BETWEEN", "ADD_MONTHS",
+            "CURRENT_DATE", "pow", "math",
+            "sum", "int", "float"
         }
+
+
 
         variables = sorted(v for v in variables if v.upper() not in blacklist)
 
         cols = st.columns(3)
         for idx, var in enumerate(variables):
             with cols[idx % 3]:
-                sample_inputs[var] = st.text_input(var, value="0")
+                if is_probable_date_field(var):
+                    sample_inputs[var] = st.date_input(var, value=date.today())
+                else:
+                    sample_inputs[var] = st.text_input(var, value="0")
+
 
         # Convert numeric inputs
         for k, v in sample_inputs.items():
