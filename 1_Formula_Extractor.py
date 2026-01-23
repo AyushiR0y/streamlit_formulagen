@@ -117,7 +117,7 @@ DEFAULT_TARGET_OUTPUT_VARIABLES = [
     'GSV',
     'PAID_UP_SA',
     'PAID_UP_SA_ON_DEATH',
-    'paid_up_income_benefit_amount',
+    'PAID_UP_INCOME_INSTALLMENT',
     'SSV1_AMT',
     'SSV2_AMT',
     'SSV3_AMT',
