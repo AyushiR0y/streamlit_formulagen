@@ -62,6 +62,9 @@ FORMULA_ALIASES = {
     'ROP_BENEFIT': 'TOTAL_PREMIUM_PAID',  # ROP_BENEFIT should use TOTAL_PREMIUM_PAID column
     'TOTAL_PREMIUMS_PAID': 'TOTAL_PREMIUM_PAID',  # Handle plural variation
     'Income_Benefit_Amount': 'PAID_UP_INCOME_BENEFIT_AMOUNT',  # If income benefit is calculated
+    'SSV1_AMT': 'SSV1',
+    'SSV2_AMT': 'SSV2',
+    'SSV3_AMT': 'SSV3',
 }
 
 def get_output_column_name(formula_name: str, var_to_header_mapping: Dict[str, str]) -> str:
@@ -253,6 +256,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
     
     # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
+    # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
     bracketed_headers = set()
     if is_pre_mapped:
         pattern = r'\[([^\]]+)\]'
@@ -262,8 +266,16 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         for header_name in bracketed_headers:
             val = None
             
+            # NEW: Strategy 0 - Check if this is an aliased variable
+            actual_column_to_check = header_name
+            if header_name in FORMULA_ALIASES:
+                actual_column_to_check = FORMULA_ALIASES[header_name]
+                # Try to get value from the aliased column
+                if actual_column_to_check in row.index:
+                    val = row[actual_column_to_check]
+            
             # Strategy 1: Check if header_name is a variable that maps to a column
-            if header_name in var_to_header_mapping:
+            if val is None and header_name in var_to_header_mapping:
                 actual_header = var_to_header_mapping[header_name]
                 if actual_header in row.index:
                     val = row[actual_header]
