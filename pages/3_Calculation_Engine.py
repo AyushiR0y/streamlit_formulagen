@@ -523,7 +523,6 @@ def run_calculations(df: pd.DataFrame,
             success_rate=success_rate
         ))
         
-        st.markdown("---")
     
     return result_df, calculation_results
 
@@ -895,11 +894,6 @@ def main():
         </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("---")
-    
-   # test_formulas_interface()
-    
-    st.markdown("---")
     
     has_mappings = 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping
     has_formulas = 'formulas' in st.session_state and st.session_state.formulas
@@ -950,9 +944,7 @@ def main():
             st.success(f"✅ **Mappings:** {len(st.session_state.header_to_var_mapping)}")
         with col2:
             st.success(f"✅ **Formulas:** {len(st.session_state.formulas)}")
-    
-    st.markdown("---")
-    
+        
     if not has_data:
         st.warning("⚠️ No data file loaded")
         uploaded_data = st.file_uploader("Upload Data File", type=['csv', 'xlsx', 'xls', 'json'])
@@ -980,9 +972,7 @@ def main():
     
     with st.expander("📊 Data Preview"):
         st.dataframe(calc_df.head(10), use_container_width=True)
-    
-    st.markdown("---")
-    
+        
     include_derived = st.checkbox("Include derived formulas", value=True, 
                                   help="Automatically include standard derived calculations")
     
@@ -991,9 +981,7 @@ def main():
             for name, info in BASIC_DERIVED_FORMULAS.items():
                 st.write(f"**{name}**: {info['description']}")
                 st.code(info['formula'])
-    
-    st.markdown("---")
-    
+        
     col1, col2 = st.columns([1, 3])
     with col1:
         if st.button("▶️ Run Calculations", type="primary", use_container_width=True):
@@ -1024,7 +1012,6 @@ def main():
             st.rerun()
     
     if 'results_df' in st.session_state and st.session_state.results_df is not None:
-        st.markdown("---")
         st.subheader("✅ Results")
         
         total_rows = len(st.session_state.results_df)
@@ -1038,9 +1025,7 @@ def main():
             st.metric("Formulas Applied", total_formulas)
         with col3:
             st.metric("Avg Success", f"{avg_success:.1f}%")
-        
-        st.markdown("---")
-        
+                
         with st.expander("📊 Formula Details", expanded=False):
             for calc_result in st.session_state.calc_results:
                 icon = "✅" if calc_result.success_rate >= 90 else "⚠️" if calc_result.success_rate >= 50 else "❌"
