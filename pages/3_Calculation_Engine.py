@@ -877,7 +877,208 @@ def import_formulas_from_json(json_file) -> List[Dict]:
         
     except Exception as e:
         raise ValueError(f"Error reading JSON: {str(e)}")
-
+def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict], 
+                               header_to_var_mapping: Dict[str, str], 
+                               num_rows: int = 3):
+    """Show detailed step-by-step calculations for the first N rows"""
+    
+    st.markdown("---")
+    st.markdown(f"### 🔍 Detailed Calculation Breakdown (First {num_rows} Rows)")
+    
+    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
+    
+    # Include derived formulas
+    all_formulas = get_derived_formulas() + formulas
+    
+    for row_idx in range(min(num_rows, len(result_df))):
+        st.markdown(f"## 📊 Row {row_idx + 1}")
+        
+        row = result_df.iloc[row_idx]
+        
+        # Show original data values
+        with st.expander(f"📋 Original Data - Row {row_idx + 1}", expanded=False):
+            original_data = {}
+            for col in result_df.columns:
+                if col not in [f['formula_name'] for f in all_formulas]:
+                    original_data[col] = row[col]
+            st.json(original_data)
+        
+        # Process each formula
+        for formula_idx, formula in enumerate(all_formulas):
+            formula_name = formula.get('formula_name', 'Unknown')
+            formula_expr = formula.get('formula_expression', '')
+            is_pre_mapped = formula.get('is_pre_mapped', False)
+            
+            output_col = get_output_column_name(formula_name, var_to_header_mapping)
+            
+            with st.expander(f"{'🔧' if formula_idx < len(get_derived_formulas()) else '📐'} {formula_name} → {output_col}", expanded=True):
+                
+                # Show formula
+                st.code(formula_expr, language="python")
+                
+                # Extract variables used
+                var_values = {}
+                
+                if is_pre_mapped:
+                    # Bracketed variables
+                    pattern = r'\[([^\]]+)\]'
+                    matches = re.findall(pattern, formula_expr)
+                    
+                    st.markdown("**Variable Lookup:**")
+                    lookup_table = []
+                    
+                    for header_name in matches:
+                        val = None
+                        source = "Not Found"
+                        
+                        # Check alias
+                        if header_name in FORMULA_ALIASES:
+                            aliased_col = FORMULA_ALIASES[header_name]
+                            if aliased_col in row.index:
+                                val = row[aliased_col]
+                                source = f"Alias → {aliased_col}"
+                        
+                        # Check mapping
+                        if val is None and header_name in var_to_header_mapping:
+                            actual_header = var_to_header_mapping[header_name]
+                            if actual_header in row.index:
+                                val = row[actual_header]
+                                source = f"Mapping → {actual_header}"
+                        
+                        # Direct column
+                        if val is None and header_name in row.index:
+                            val = row[header_name]
+                            source = "Direct Column"
+                        
+                        if val is None:
+                            val = 0.0
+                            source = "Default (0.0)"
+                        
+                        var_values[f"[{header_name}]"] = val
+                        lookup_table.append({
+                            'Variable': f'[{header_name}]',
+                            'Value': val,
+                            'Source': source
+                        })
+                    
+                    st.table(pd.DataFrame(lookup_table))
+                
+                else:
+                    # Non-bracketed variables
+                    # Extract from MONTHS_BETWEEN
+                    potential_vars = set()
+                    if 'MONTHS_BETWEEN' in formula_expr.upper():
+                        pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
+                        matches = re.findall(pattern, formula_expr, flags=re.IGNORECASE)
+                        for match in matches:
+                            v1 = re.findall(r'\b\w+\b', match[0])
+                            v2 = re.findall(r'\b\w+\b', match[1])
+                            potential_vars.update(v1)
+                            potential_vars.update(v2)
+                    
+                    # Extract from ADD_MONTHS
+                    if 'ADD_MONTHS' in formula_expr.upper():
+                        pattern = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
+                        matches = re.findall(pattern, formula_expr, flags=re.IGNORECASE)
+                        for match in matches:
+                            v1 = re.findall(r'\b\w+\b', match[0])
+                            v2 = re.findall(r'\b\w+\b', match[1])
+                            potential_vars.update(v1)
+                            potential_vars.update(v2)
+                    
+                    # Other variables
+                    clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', formula_expr, flags=re.IGNORECASE)
+                    clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
+                    other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
+                    potential_vars.update(other_vars)
+                    
+                    python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 'CURRENT_DATE'}
+                    potential_vars = potential_vars - python_keywords
+                    
+                    st.markdown("**Variable Lookup:**")
+                    lookup_table = []
+                    
+                    for var_name in sorted(potential_vars):
+                        val = None
+                        source = "Not Found"
+                        
+                        # Check alias
+                        if var_name in FORMULA_ALIASES:
+                            aliased_col = FORMULA_ALIASES[var_name]
+                            if aliased_col in row.index:
+                                val = row[aliased_col]
+                                source = f"Alias → {aliased_col}"
+                        
+                        # Direct column
+                        if val is None and var_name in row.index:
+                            val = row[var_name]
+                            source = "Calculated Column"
+                        
+                        # Check mapping
+                        if val is None:
+                            if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
+                                mapped_header = header_to_var_mapping[var_name]
+                                if mapped_header in row.index:
+                                    val = row[mapped_header]
+                                    source = f"Mapping → {mapped_header}"
+                            elif var_name in var_to_header_mapping:
+                                mapped_header = var_to_header_mapping[var_name]
+                                if mapped_header in row.index:
+                                    val = row[mapped_header]
+                                    source = f"Reverse Mapping → {mapped_header}"
+                        
+                        if val is None:
+                            val = 0.0
+                            source = "Default (0.0)"
+                        
+                        var_values[var_name] = val
+                        lookup_table.append({
+                            'Variable': var_name,
+                            'Value': val,
+                            'Source': source
+                        })
+                    
+                    if lookup_table:
+                        st.table(pd.DataFrame(lookup_table))
+                
+                # Calculate result
+                try:
+                    result = calculate_row(row, formula_expr, header_to_var_mapping, is_pre_mapped=is_pre_mapped)
+                    
+                    col1, col2 = st.columns([1, 2])
+                    with col1:
+                        st.markdown("**Calculation:**")
+                    with col2:
+                        # Show simplified expression with values substituted
+                        simplified_expr = formula_expr
+                        for var, val in var_values.items():
+                            if isinstance(val, (int, float)):
+                                simplified_expr = simplified_expr.replace(var, f"{val:.6f}")
+                            else:
+                                simplified_expr = simplified_expr.replace(var, str(val))
+                        st.code(simplified_expr, language="python")
+                    
+                    if result is not None:
+                        if isinstance(result, (datetime, pd.Timestamp)):
+                            st.success(f"✅ **Result:** {result.strftime('%Y-%m-%d')}")
+                        elif isinstance(result, float):
+                            st.success(f"✅ **Result:** {result:,.6f}")
+                        else:
+                            st.success(f"✅ **Result:** {result}")
+                        
+                        st.info(f"💾 Stored in column: **{output_col}**")
+                    else:
+                        st.error("❌ **Result:** None (calculation failed)")
+                        
+                except Exception as e:
+                    st.error(f"❌ **Error:** {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                
+                st.markdown("---")
+        
+        st.markdown("---")
+        st.markdown("---")
 # --- Main App ---
 def main():
     st.set_page_config(page_title="Calculation Engine", page_icon="🧮", layout="wide")
@@ -1035,7 +1236,42 @@ def main():
                         st.caption(f"  {err}")
         
         st.dataframe(st.session_state.results_df, use_container_width=True, height=400)
-        
+        if 'results_df' in st.session_state and st.session_state.results_df is not None:
+            st.markdown("---")
+            st.subheader("✅ Results")
+            
+            total_rows = len(st.session_state.results_df)
+            total_formulas = len(st.session_state.calc_results)
+            avg_success = sum(r.success_rate for r in st.session_state.calc_results) / total_formulas if total_formulas > 0 else 0
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Rows", total_rows)
+            with col2:
+                st.metric("Formulas Applied", total_formulas)
+            with col3:
+                st.metric("Avg Success", f"{avg_success:.1f}%")
+            
+            st.markdown("---")
+            
+            # NEW: Add detailed calculation view
+            if st.checkbox("🔍 Show Detailed Calculations (First 3 Rows)", value=False):
+                show_detailed_calculations(
+                    st.session_state.results_df, 
+                    st.session_state.formulas,
+                    st.session_state.header_to_var_mapping,
+                    num_rows=3
+                )
+            
+            with st.expander("📊 Formula Details", expanded=False):
+                for calc_result in st.session_state.calc_results:
+                    icon = "✅" if calc_result.success_rate >= 90 else "⚠️" if calc_result.success_rate >= 50 else "❌"
+                    st.write(f"{icon} **{calc_result.formula_name}**: {calc_result.success_rate:.1f}%")
+                    if calc_result.errors:
+                        for err in calc_result.errors[:3]:
+                            st.caption(f"  {err}")
+            
+            # ... rest of the results display code
         from io import BytesIO
         col1, col2 = st.columns(2)
         
