@@ -205,13 +205,7 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             if len(parts) >= 2:
                 eval_expr = parts[-1].strip()
 
-        # FIX: Convert percentages BEFORE variable substitution
-        eval_expr = re.sub(
-            r'(?<![a-zA-Z0-9_])(\d+(?:\.\d+)?)\s*%',
-            r'(\1/100)',
-            eval_expr
-        )
-        
+        # Process MONTHS_BETWEEN
         if 'MONTHS_BETWEEN' in eval_expr.upper():
             pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
             matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
@@ -222,6 +216,7 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                 result = months_between(val1, val2)
                 eval_expr = eval_expr[:match.start()] + str(result) + eval_expr[match.end():]
         
+        # Process ADD_MONTHS
         if 'ADD_MONTHS' in eval_expr.upper():
             pattern = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
             matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
@@ -245,11 +240,13 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                 else:
                     eval_expr = eval_expr[:match.start()] + '0' + eval_expr[match.end():]
         
+        # Process CURRENT_DATE
         if 'CURRENT_DATE' in eval_expr.upper():
             current_date = datetime.now()
             eval_expr = re.sub(r'\bCURRENT_DATE\b', f"'{current_date.strftime('%Y-%m-%d')}'", 
                               eval_expr, flags=re.IGNORECASE)
         
+        # Map function names
         func_mappings = {
             r'\bMAX\s*\(': 'max(',
             r'\bMIN\s*\(': 'min(',
@@ -263,11 +260,10 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         for pattern, replacement in func_mappings.items():
             eval_expr = re.sub(pattern, replacement, eval_expr, flags=re.IGNORECASE)
         
-        # FIX: Sort variables by length (longest first) to prevent partial replacements
+        # Sort variables by length (longest first)
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
         
-        # Build a single-pass replacement using a unique delimiter approach
-        # Step 1: Replace all variables with unique tokens
+        # Replace variables with tokens
         token_map = {}
         for idx, var_name in enumerate(sorted_vars):
             value = variables[var_name]
@@ -276,18 +272,22 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             token_map[token] = str(numeric_value)
             
             if var_name.startswith('[') and var_name.endswith(']'):
-                # Bracketed variables - direct replacement
                 eval_expr = eval_expr.replace(var_name, token)
             else:
-                # Non-bracketed - use word boundary to avoid partial matches
                 pattern = r'\b' + re.escape(var_name) + r'\b'
                 eval_expr = re.sub(pattern, token, eval_expr, flags=re.IGNORECASE)
         
-        # Step 2: Replace all tokens with actual numeric values
+        # Replace tokens with actual values
         for token, value_str in token_map.items():
             eval_expr = eval_expr.replace(token, value_str)
         
-        # DEBUG: Print the final expression before evaluation
+        # Convert percentages AFTER variable substitution - without extra parentheses
+        eval_expr = re.sub(
+            r'(\d+(?:\.\d+)?)\s*%',
+            r'\1/100',
+            eval_expr
+        )
+        
         print(f"Final eval expression: {eval_expr}")
         
         allowed_builtins = {
@@ -299,7 +299,6 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         
         print(f"Eval result type: {type(result)}, value: {result}")
         
-        # Accept any numeric result
         if isinstance(result, (int, float)):
             if math.isnan(result) or math.isinf(result):
                 print(f"Result is NaN or Inf, returning None")
