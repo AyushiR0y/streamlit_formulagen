@@ -138,7 +138,7 @@ def get_derived_formulas() -> List[Dict]:
 # --- Helper Functions ---
 
 def safe_convert_to_number(value: Any) -> float:
-    """Safely convert various types to float"""
+    """Safely convert various types to float - FIXED VERSION"""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return 0.0
     if isinstance(value, str) and (value == '' or value.strip() == ''):
@@ -160,6 +160,7 @@ def safe_convert_to_number(value: Any) -> float:
             except:
                 return 0.0
     return 0.0
+
 
 def months_between(date1, date2):
     """Calculate months between two dates (date2 - date1)"""
@@ -185,7 +186,7 @@ def add_months(date, months):
     except:
         return None
 
-def safe_eval(expression: str, variables: Dict[str, str]) -> Any:
+def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
     """Safely evaluate a mathematical expression - CORRECTED VERSION"""
     try:
         eval_expr = expression.strip()
@@ -268,7 +269,15 @@ def safe_eval(expression: str, variables: Dict[str, str]) -> Any:
         
         for idx, var_name in enumerate(sorted_vars):
             value = variables[var_name]
-            numeric_value = safe_convert_to_number(value)
+            
+            # CRITICAL: Don't convert to number for bracketed variables - keep original value
+            if var_name.startswith('[') and var_name.endswith(']'):
+                # For bracketed variables, use the original value directly
+                numeric_value = value
+                print(f"  Found bracketed variable {var_name} = {value} (type: {type(value).__name__})")
+            else:
+                # For regular variables, convert to number
+                numeric_value = safe_convert_to_number(value)
             
             # Use a placeholder that's guaranteed not to appear in formulas
             placeholder = f"§§§VAR{idx}§§§"
