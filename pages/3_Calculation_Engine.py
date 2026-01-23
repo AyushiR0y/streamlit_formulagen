@@ -348,7 +348,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     """
     Calculate formula result for a single row.
     HYBRID LOGIC: Handles [Bracketed Headers], Existing Columns, and Standard Variables.
-    PRIORITY: Calculated columns > Aliases > Direct headers > Mappings
+    PRIORITY: Non-NaN original data > Calculated columns > Aliases > Mappings
     """
     var_values = {}
     
@@ -365,11 +365,12 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         for header_name in bracketed_headers:
             val = None
             
-            # PRIORITY 1: Check if this is a CALCULATED COLUMN (highest priority)
+            # PRIORITY 1: Check direct column match (original data or calculated)
             if header_name in row.index:
                 val = row[header_name]
                 if pd.notna(val):
                     var_values[f"[{header_name}]"] = val
+                    print(f"✓ [PRE-MAPPED] Found [{header_name}] directly = {val}")
                     continue
             
             # PRIORITY 2: Check if this is an aliased variable
@@ -429,16 +430,14 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'\[[^\]]+\]', '', clean_expr)
     
-    # FIX: Remove function calls like MAX(...), MIN(...) before extracting variables
-    # But we need to keep the contents of MAX/MIN to extract variables from inside them
+    # Remove function calls like MAX(...), MIN(...) before extracting variables
     temp_expr = clean_expr
-    # Remove the function name but keep contents
     temp_expr = re.sub(r'\b(MAX|MIN|ABS|ROUND|SUM|POWER|SQRT|POW)\s*\(', '(', temp_expr, flags=re.IGNORECASE)
     
     other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', temp_expr))
     potential_vars.update(other_vars)
     
-    # UPDATED: More comprehensive keyword list
+    # Remove Python keywords
     python_keywords = {
         'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 
         'CURRENT_DATE', 'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'POW'
@@ -446,7 +445,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     potential_vars = potential_vars - python_keywords
     
     # 3. POPULATE var_values with found variables
-    # PRIORITY ORDER: Calculated columns > Aliases > Direct headers > Mappings
+    # PRIORITY ORDER: Direct column match (if not NaN) > Aliases > Mappings
     for var_name in potential_vars:
         # Skip if already added as bracketed variable
         if f"[{var_name}]" in var_values:
@@ -455,18 +454,16 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         val = None
         found_source = None
         
-        # PRIORITY 1: Check if it's a calculated column (direct match) - HIGHEST PRIORITY
+        # PRIORITY 1: Check direct column match (original data or calculated)
         if var_name in row.index:
             val = row[var_name]
             if pd.notna(val):
                 var_values[var_name] = val
-                found_source = f"Calculated Column: {var_name}"
-                print(f"✓ Found {var_name} as calculated column = {val}")
+                found_source = f"Direct Column: {var_name}"
+                print(f"✓ Found {var_name} directly = {val}")
                 continue
-            else:
-                print(f"⚠ Found {var_name} in row.index but value is NaN")
         
-        # PRIORITY 2: Check if it's an aliased formula (e.g., ROP_BENEFIT → TOTAL_PREMIUM_PAID)
+        # PRIORITY 2: Check if it's an aliased formula
         if var_name in FORMULA_ALIASES:
             aliased_col = FORMULA_ALIASES[var_name]
             if aliased_col in row.index:
@@ -507,7 +504,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         # If still not found, default to 0.0
         if var_name not in var_values:
             print(f"❌ WARNING: Variable '{var_name}' not found in row, defaulting to 0.0")
-            print(f"   Available columns: {list(row.index)[:10]}...")  # Show first 10 columns
+            print(f"   Available columns: {list(row.index)[:10]}...")
             var_values[var_name] = 0.0
     
     # DEBUG: Print what variables we're passing to safe_eval
