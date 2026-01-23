@@ -263,28 +263,29 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         for pattern, replacement in func_mappings.items():
             eval_expr = re.sub(pattern, replacement, eval_expr, flags=re.IGNORECASE)
         
-        # FIX: Sort variables by length (longest first) AND use placeholders to avoid re-replacement
+        # FIX: Sort variables by length (longest first) to prevent partial replacements
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
         
-        # Create a mapping of placeholders
-        placeholder_map = {}
+        # Build a single-pass replacement using a unique delimiter approach
+        # Step 1: Replace all variables with unique tokens
+        token_map = {}
         for idx, var_name in enumerate(sorted_vars):
             value = variables[var_name]
             numeric_value = safe_convert_to_number(value)
-            placeholder = f"__VAR_{idx}__"
-            placeholder_map[placeholder] = numeric_value
+            token = f"___TOKEN{idx}___"
+            token_map[token] = str(numeric_value)
             
             if var_name.startswith('[') and var_name.endswith(']'):
-                # Bracketed variables - direct replacement with placeholder
-                eval_expr = eval_expr.replace(var_name, placeholder)
+                # Bracketed variables - direct replacement
+                eval_expr = eval_expr.replace(var_name, token)
             else:
                 # Non-bracketed - use word boundary to avoid partial matches
                 pattern = r'\b' + re.escape(var_name) + r'\b'
-                eval_expr = re.sub(pattern, placeholder, eval_expr, flags=re.IGNORECASE)
+                eval_expr = re.sub(pattern, token, eval_expr, flags=re.IGNORECASE)
         
-        # Now replace all placeholders with actual numeric values wrapped in parentheses
-        for placeholder, numeric_value in placeholder_map.items():
-            eval_expr = eval_expr.replace(placeholder, f"({numeric_value})")
+        # Step 2: Replace all tokens with actual numeric values
+        for token, value_str in token_map.items():
+            eval_expr = eval_expr.replace(token, value_str)
         
         # DEBUG: Print the final expression before evaluation
         print(f"Final eval expression: {eval_expr}")
@@ -296,18 +297,24 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         
         result = eval(eval_expr, {"__builtins__": allowed_builtins, "math": math}, {})
         
+        print(f"Eval result type: {type(result)}, value: {result}")
+        
         # Accept any numeric result
         if isinstance(result, (int, float)):
             if math.isnan(result) or math.isinf(result):
+                print(f"Result is NaN or Inf, returning None")
                 return None
             return float(result)
         elif isinstance(result, (datetime, date, pd.Timestamp)):
             return result
         else:
+            print(f"Unexpected result type: {type(result)}, returning None")
             return None
     
     except Exception as e:
         print(f"Evaluation error: {e} | Expr: {expression} | Final: {eval_expr if 'eval_expr' in locals() else 'N/A'}")
+        import traceback
+        traceback.print_exc()
         return None
 def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str], is_pre_mapped: bool = False) -> Any:
     """
