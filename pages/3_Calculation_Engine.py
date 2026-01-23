@@ -385,22 +385,22 @@ def run_calculations(df: pd.DataFrame,
     df_columns = df.columns.tolist()
     
     for formula in all_formulas:
-    formula_name = formula.get('formula_name', 'Unknown')
-    formula_expr = formula.get('formula_expression', '')
-    is_pre_mapped = formula.get('is_pre_mapped', False)
-    
-    # FIX: Determine output column based on mapping
-    output_col = formula_name  # Default to formula name
-    
-    # Check if this formula name has a mapping to a different column
-    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
-    if formula_name in var_to_header_mapping:
-        # Use the mapped column name instead
-        output_col = var_to_header_mapping[formula_name]
-        st.info(f"📍 **{formula_name}** mapped to column: **{output_col}**")
-    else:
-        # Otherwise use existing matching logic
-        output_col = find_matching_column(formula_name, df_columns, header_to_var_mapping)
+        formula_name = formula.get('formula_name', 'Unknown')
+        formula_expr = formula.get('formula_expression', '')
+        is_pre_mapped = formula.get('is_pre_mapped', False)
+        
+        # FIX: Determine output column based on mapping
+        output_col = formula_name  # Default to formula name
+        
+        # Check if this formula name has a mapping to a different column
+        var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
+        if formula_name in var_to_header_mapping:
+            # Use the mapped column name instead
+            output_col = var_to_header_mapping[formula_name]
+            st.info(f"📍 **{formula_name}** mapped to column: **{output_col}**")
+        else:
+            # Otherwise use existing matching logic
+            output_col = find_matching_column(formula_name, df_columns, header_to_var_mapping)
         
         col_existed = output_col in result_df.columns
         
