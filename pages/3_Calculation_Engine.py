@@ -267,49 +267,48 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     
     # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
     bracketed_headers = set()
-    if is_pre_mapped:
-        pattern = r'\[([^\]]+)\]'
-        matches = re.findall(pattern, formula_expr)
-        bracketed_headers.update(matches)
+    pattern = r'\[([^\]]+)\]'
+    matches = re.findall(pattern, formula_expr)
+    bracketed_headers.update(matches)
+    
+    for header_name in bracketed_headers:
+        val = None
         
-        for header_name in bracketed_headers:
-            val = None
-            
-            # Strategy 0 - Check if this is an aliased variable
-            if header_name in FORMULA_ALIASES:
-                actual_column_to_check = FORMULA_ALIASES[header_name]
-                if actual_column_to_check in row.index:
-                    val = row[actual_column_to_check]
-            
-            # Strategy 1: Check if header_name is a variable that maps to a column
-            if val is None and header_name in var_to_header_mapping:
-                actual_header = var_to_header_mapping[header_name]
-                if actual_header in row.index:
-                    val = row[actual_header]
-            
-            # Strategy 2: Check if header_name itself is a column (direct match)
-            if val is None and header_name in row.index:
-                val = row[header_name]
-            
-            # Strategy 3: Case-insensitive column match
-            if val is None:
-                for col in row.index:
-                    if col.lower() == header_name.lower():
-                        val = row[col]
-                        break
-            
-            if val is not None:
-                var_values[f"[{header_name}]"] = val
-            else:
-                var_values[f"[{header_name}]"] = 0.0
+        # Strategy 0 - Check if this is an aliased variable
+        if header_name in FORMULA_ALIASES:
+            actual_column_to_check = FORMULA_ALIASES[header_name]
+            if actual_column_to_check in row.index:
+                val = row[actual_column_to_check]
+        
+        # Strategy 1: Check if header_name is a variable that maps to a column
+        if val is None and header_name in var_to_header_mapping:
+            actual_header = var_to_header_mapping[header_name]
+            if actual_header in row.index:
+                val = row[actual_header]
+        
+        # Strategy 2: Check if header_name itself is a column (direct match)
+        if val is None and header_name in row.index:
+            val = row[header_name]
+        
+        # Strategy 3: Case-insensitive column match
+        if val is None:
+            for col in row.index:
+                if col.lower() == header_name.lower():
+                    val = row[col]
+                    break
+        
+        if val is not None:
+            var_values[f"[{header_name}]"] = val
+        else:
+            var_values[f"[{header_name}]"] = 0.0
 
-    # 2. IDENTIFY Potential Variables
+    # 2. IDENTIFY Potential Variables (NON-BRACKETED)
     potential_vars = set()
     
     # Extract from MONTHS_BETWEEN
     if 'MONTHS_BETWEEN' in formula_expr.upper():
-        pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
-        matches = re.findall(pattern, formula_expr, flags=re.IGNORECASE)
+        pattern_mb = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
+        matches = re.findall(pattern_mb, formula_expr, flags=re.IGNORECASE)
         for match in matches:
             v1 = re.findall(r'\b\w+\b', match[0])
             v2 = re.findall(r'\b\w+\b', match[1])
@@ -318,34 +317,38 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             
     # Extract from ADD_MONTHS
     if 'ADD_MONTHS' in formula_expr.upper():
-        pattern = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
-        matches = re.findall(pattern, formula_expr, flags=re.IGNORECASE)
+        pattern_am = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
+        matches = re.findall(pattern_am, formula_expr, flags=re.IGNORECASE)
         for match in matches:
             v1 = re.findall(r'\b\w+\b', match[0])
             v2 = re.findall(r'\b\w+\b', match[1])
             potential_vars.update(v1)
             potential_vars.update(v2)
 
-    # Extract other variables (but exclude function calls)
-    clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', formula_expr, flags=re.IGNORECASE)
-    clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
-    clean_expr = re.sub(r'\[[^\]]+\]', '', clean_expr)
+    # Extract ALL other variables from the entire expression
+    # Remove bracketed content first, but keep the rest
+    clean_expr = formula_expr
+    clean_expr = re.sub(r'\[[^\]]+\]', '', clean_expr)  # Remove [...]
     
-    # FIX: Remove function calls like MAX(...), MIN(...) before extracting variables
-    clean_expr = re.sub(r'\b(MAX|MIN|ABS|ROUND|SUM|POWER|SQRT|POW)\s*\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
-    
-    other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
-    potential_vars.update(other_vars)
+    # Remove function calls but keep their arguments
+    # DON'T remove the entire function call, just the function name
+    all_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
+    potential_vars.update(all_vars)
     
     # UPDATED: More comprehensive keyword list
     python_keywords = {
         'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 
-        'CURRENT_DATE', 'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'POW'
+        'CURRENT_DATE', 'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'POW',
+        'MONTHS_BETWEEN', 'ADD_MONTHS'
     }
     potential_vars = potential_vars - python_keywords
     
-    # 3. POPULATE var_values with found variables
+    # 3. POPULATE var_values with found variables (NON-BRACKETED)
     for var_name in potential_vars:
+        # Skip if already handled as bracketed
+        if f"[{var_name}]" in var_values:
+            continue
+            
         # Strategy 1: Check if it's an aliased formula (e.g., ROP_BENEFIT → TOTAL_PREMIUM_PAID)
         if var_name in FORMULA_ALIASES:
             aliased_col = FORMULA_ALIASES[var_name]
@@ -369,6 +372,9 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         
         if mapped_header and mapped_header in row.index:
             var_values[var_name] = row[mapped_header]
+            continue
+        
+        # If still not found, don't add to var_values (let safe_eval handle it)
     
     result = safe_eval(formula_expr, var_values)
     return result
