@@ -88,11 +88,6 @@ BASIC_DERIVED_FORMULAS = {
         'description': 'Maturity date calculation',
         'formula': 'ADD_MONTHS(TERM_START_DATE, BENEFIT_TERM * 12)',
         'variables': ['TERM_START_DATE', 'BENEFIT_TERM']
-    },
-    'Elapsed_policy_duration': {
-        'description': 'Years elapsed since policy start',
-        'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, CURRENT_DATE) / 12)', # Also applied int() here
-        'variables': ['TERM_START_DATE']
     }
 }
 
@@ -196,7 +191,7 @@ def add_months(date, months):
         return None
 
 def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
-    """Safely evaluate a mathematical expression"""
+    """Safely evaluate - Version 2 with better MAX handling"""
     try:
         eval_expr = expression.strip()
 
@@ -205,7 +200,7 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             if len(parts) >= 2:
                 eval_expr = parts[-1].strip()
 
-        # Process MONTHS_BETWEEN
+        # Process date functions
         if 'MONTHS_BETWEEN' in eval_expr.upper():
             pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
             matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
@@ -216,7 +211,6 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                 result = months_between(val1, val2)
                 eval_expr = eval_expr[:match.start()] + str(result) + eval_expr[match.end():]
         
-        # Process ADD_MONTHS
         if 'ADD_MONTHS' in eval_expr.upper():
             pattern = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
             matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
@@ -234,19 +228,17 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                     val2_float = safe_convert_to_number(var2)
                 
                 result = add_months(val1, val2_float)
-                
                 if result:
                     return result
                 else:
                     eval_expr = eval_expr[:match.start()] + '0' + eval_expr[match.end():]
         
-        # Process CURRENT_DATE
         if 'CURRENT_DATE' in eval_expr.upper():
             current_date = datetime.now()
             eval_expr = re.sub(r'\bCURRENT_DATE\b', f"'{current_date.strftime('%Y-%m-%d')}'", 
                               eval_expr, flags=re.IGNORECASE)
         
-        # Map function names
+        # Map functions - case insensitive
         func_mappings = {
             r'\bMAX\s*\(': 'max(',
             r'\bMIN\s*\(': 'min(',
@@ -260,16 +252,15 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         for pattern, replacement in func_mappings.items():
             eval_expr = re.sub(pattern, replacement, eval_expr, flags=re.IGNORECASE)
         
-        # Sort variables by length (longest first)
+        # Replace variables
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
-        
-        # Replace variables with tokens
         token_map = {}
+        
         for idx, var_name in enumerate(sorted_vars):
             value = variables[var_name]
             numeric_value = safe_convert_to_number(value)
-            token = f"___TOKEN{idx}___"
-            token_map[token] = str(numeric_value)
+            token = f"___VAR_{idx}___"
+            token_map[token] = numeric_value
             
             if var_name.startswith('[') and var_name.endswith(']'):
                 eval_expr = eval_expr.replace(var_name, token)
@@ -277,18 +268,15 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                 pattern = r'\b' + re.escape(var_name) + r'\b'
                 eval_expr = re.sub(pattern, token, eval_expr, flags=re.IGNORECASE)
         
-        # Replace tokens with actual values
-        for token, value_str in token_map.items():
-            eval_expr = eval_expr.replace(token, value_str)
+        # Replace tokens with values
+        for token, numeric_value in token_map.items():
+            # Use repr() to ensure proper formatting
+            eval_expr = eval_expr.replace(token, repr(numeric_value))
         
-        # Convert percentages AFTER variable substitution - without extra parentheses
-        eval_expr = re.sub(
-            r'(\d+(?:\.\d+)?)\s*%',
-            r'\1/100',
-            eval_expr
-        )
+        # Convert percentages - ensure proper float division
+        eval_expr = re.sub(r'(\d+(?:\.\d+)?)\s*%', r'((\1)/100.0)', eval_expr)
         
-        print(f"Final eval expression: {eval_expr}")
+        print(f"🔧 Final expression: {eval_expr}")
         
         allowed_builtins = {
             'max': max, 'min': min, 'abs': abs, 'round': round,
@@ -297,24 +285,25 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         
         result = eval(eval_expr, {"__builtins__": allowed_builtins, "math": math}, {})
         
-        print(f"Eval result type: {type(result)}, value: {result}")
+        print(f"✅ Result: {result} (type: {type(result).__name__})")
         
         if isinstance(result, (int, float)):
             if math.isnan(result) or math.isinf(result):
-                print(f"Result is NaN or Inf, returning None")
                 return None
             return float(result)
         elif isinstance(result, (datetime, date, pd.Timestamp)):
             return result
         else:
-            print(f"Unexpected result type: {type(result)}, returning None")
             return None
     
     except Exception as e:
-        print(f"Evaluation error: {e} | Expr: {expression} | Final: {eval_expr if 'eval_expr' in locals() else 'N/A'}")
+        print(f"❌ Error in safe_eval_v2: {e}")
+        print(f"   Expression: {expression}")
+        print(f"   After processing: {eval_expr if 'eval_expr' in locals() else 'N/A'}")
         import traceback
         traceback.print_exc()
         return None
+
 def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str], is_pre_mapped: bool = False) -> Any:
     """
     Calculate formula result for a single row.
@@ -656,82 +645,6 @@ def run_calculations(df: pd.DataFrame,
     
     return result_df, calculation_results
 
-# --- NEW: Test Formula Functionality ---
-def extract_variables_from_formulas(formulas: List[Dict]) -> Dict[str, List[str]]:
-    """Extract all unique variables from formulas JSON"""
-    variables = {
-        'bracketed': set(),
-        'plain': set(),
-        'derived': set()
-    }
-    
-    for formula in formulas:
-        formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
-        
-        bracketed_matches = re.findall(r'\[([^\]]+)\]', formula_expr)
-        variables['bracketed'].update(bracketed_matches)
-        
-        clean_expr = re.sub(r'\[[^\]]+\]', '', formula_expr)
-        clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
-        clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
-        
-        potential_vars = re.findall(r'\b[A-Z][A-Z0-9_]*\b', clean_expr)
-        
-        exclude_words = {'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'CURRENT_DATE', 'MONTHS_BETWEEN', 'ADD_MONTHS'}
-        plain_vars = [var for var in potential_vars if var not in exclude_words and len(var) > 1]
-        variables['plain'].update(plain_vars)
-    
-    for formula_name, info in BASIC_DERIVED_FORMULAS.items():
-        variables['derived'].update(info['variables'])
-    
-    return {
-        'bracketed': sorted(list(variables['bracketed'])) if variables['bracketed'] else [],
-        'plain': sorted(list(variables['plain'])) if variables['plain'] else [],
-        'derived': sorted(list(variables['derived'])) if variables['derived'] else []
-    }
-
-def get_smart_default_value(var_name: str):
-    """Get smart default value based on variable name patterns"""
-    var_upper = var_name.upper()
-    
-    # Date variables
-    if 'DATE' in var_upper:
-        if 'START' in var_upper:
-            return date(2020, 1, 1)
-        else:
-            return date(2023, 6, 15)
-    
-    # Factor variables (0-1 range)
-    if 'FACTOR' in var_upper:
-        if 'GSV' in var_upper or 'SSV' in var_upper:
-            return 0.3
-        elif 'SV' in var_upper:
-            return 0.5
-        else:
-            return 0.1
-    
-    # Premium/Amount variables
-    if any(term in var_upper for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM']):
-        if 'TERM' in var_upper:
-            return 10.0  # FIX: Return float 10.0 instead of int 10
-        elif 'FULL' in var_upper or 'TOTAL' in var_upper:
-            return 50000.0
-        elif 'INCOME' in var_upper:
-            return 10000.0
-        else:
-            return 100000.0
-    
-    # Term variables
-    if 'TERM' in var_upper:
-        return 10.0  # FIX: Return float 10.0 instead of int 10
-    
-    # ROP (Return of Premium) variables
-    if 'ROP' in var_upper:
-        return 50000.0
-    
-    # Default numeric value
-    return 1000.0
-    
 
 # --- Import Functions ---
 def import_mappings_from_json(json_file) -> Dict[str, str]:
