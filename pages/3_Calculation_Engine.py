@@ -897,7 +897,7 @@ def main():
     
     st.markdown("---")
     
-    test_formulas_interface()
+   # test_formulas_interface()
     
     st.markdown("---")
     
