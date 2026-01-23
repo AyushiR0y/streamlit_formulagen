@@ -603,213 +603,213 @@ def get_smart_default_value(var_name: str):
     # Default numeric value
     return 1000.0
     
-def test_formulas_interface():
-    """Create an interface to test formulas with manual inputs"""
-    st.markdown("### 🧪 Formula Testing Interface")
-    st.markdown("Test your formulas and derived calculations before running on full dataset")
+# def test_formulas_interface():
+#     """Create an interface to test formulas with manual inputs"""
+#     st.markdown("### 🧪 Formula Testing Interface")
+#     st.markdown("Test your formulas and derived calculations before running on full dataset")
     
-    formula_vars = {'bracketed': [], 'plain': [], 'derived': []}
-    if 'formulas' in st.session_state and st.session_state.formulas:
-        formula_vars = extract_variables_from_formulas(st.session_state.formulas)
+#     formula_vars = {'bracketed': [], 'plain': [], 'derived': []}
+#     if 'formulas' in st.session_state and st.session_state.formulas:
+#         formula_vars = extract_variables_from_formulas(st.session_state.formulas)
     
-    with st.expander("🔧 Test Single Formula", expanded=True):
-        col1, col2 = st.columns([1, 2])
+#     with st.expander("🔧 Test Single Formula", expanded=True):
+#         col1, col2 = st.columns([1, 2])
         
-        with col1:
-            st.markdown("#### Input Values")
+#         with col1:
+#             st.markdown("#### Input Values")
             
-            input_values = {}
+#             input_values = {}
             
-            if formula_vars['derived']:
-                st.markdown("**Derived Formula Variables:**")
-                for var in formula_vars['derived']:
-                    default_value = get_smart_default_value(var)
-                    if 'DATE' in var.upper():
-                        input_values[var] = st.date_input(var, value=default_value)
-                    elif 'TERM' in var.upper() and var != 'FUP_Date':
-                        input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1.0)
-                    else:
-                        input_values[var] = st.date_input(var, value=default_value)
+#             if formula_vars['derived']:
+#                 st.markdown("**Derived Formula Variables:**")
+#                 for var in formula_vars['derived']:
+#                     default_value = get_smart_default_value(var)
+#                     if 'DATE' in var.upper():
+#                         input_values[var] = st.date_input(var, value=default_value)
+#                     elif 'TERM' in var.upper() and var != 'FUP_Date':
+#                         input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1.0)
+#                     else:
+#                         input_values[var] = st.date_input(var, value=default_value)
             
-            if formula_vars['bracketed']:
-                st.markdown("**Formula Variables (from mapped expressions):**")
-                for var in formula_vars['bracketed']:
-                    clean_var = var.replace('_', ' ').title()
-                    default_value = get_smart_default_value(var)
+#             if formula_vars['bracketed']:
+#                 st.markdown("**Formula Variables (from mapped expressions):**")
+#                 for var in formula_vars['bracketed']:
+#                     clean_var = var.replace('_', ' ').title()
+#                     default_value = get_smart_default_value(var)
                     
-                    if 'DATE' in var.upper():
-                        input_values[var] = st.date_input(f"{clean_var}", value=default_value)
-                    elif 'FACTOR' in var.upper():
-                        # FIX: Removed max_value=1.0. Factors can be greater than 1.
-                        input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, step=0.01)
-                    elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
-                        input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
-                    else:
-                        if isinstance(default_value, date):
-                            default_value = default_value.year
-                        input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
+#                     if 'DATE' in var.upper():
+#                         input_values[var] = st.date_input(f"{clean_var}", value=default_value)
+#                     elif 'FACTOR' in var.upper():
+#                         # FIX: Removed max_value=1.0. Factors can be greater than 1.
+#                         input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, step=0.01)
+#                     elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
+#                         input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
+#                     else:
+#                         if isinstance(default_value, date):
+#                             default_value = default_value.year
+#                         input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
             
-            if formula_vars['plain']:
-                st.markdown("**Additional Formula Variables:**")
-                for var in formula_vars['plain']:
-                    if var not in input_values:
-                        clean_var = var.replace('_', ' ').title()
-                        default_value = get_smart_default_value(var)
+#             if formula_vars['plain']:
+#                 st.markdown("**Additional Formula Variables:**")
+#                 for var in formula_vars['plain']:
+#                     if var not in input_values:
+#                         clean_var = var.replace('_', ' ').title()
+#                         default_value = get_smart_default_value(var)
                         
-                        if 'DATE' in var.upper():
-                            input_values[var] = st.date_input(f"{clean_var}", value=default_value)
-                        elif 'FACTOR' in var.upper():
-                            # FIX: Removed max_value=1.0. Factors can be greater than 1.
-                            input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, step=0.01)
-                        elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
-                            input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
-                        else:
-                            input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
+#                         if 'DATE' in var.upper():
+#                             input_values[var] = st.date_input(f"{clean_var}", value=default_value)
+#                         elif 'FACTOR' in var.upper():
+#                             # FIX: Removed max_value=1.0. Factors can be greater than 1.
+#                             input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, step=0.01)
+#                         elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
+#                             input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
+#                         else:
+#                             input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
             
-        with col2:
-            st.markdown("#### Test Results")
+#         with col2:
+#             st.markdown("#### Test Results")
             
-            test_row_data = {}
+#             test_row_data = {}
             
-            for var in formula_vars['derived']:
-                if var in input_values:
-                    if 'DATE' in var.upper():
-                        if isinstance(input_values[var], date):
-                            test_row_data[var] = pd.to_datetime(input_values[var])
-                        else:
-                            test_row_data[var] = input_values[var]
-                    else:
-                        test_row_data[var] = input_values[var]
+#             for var in formula_vars['derived']:
+#                 if var in input_values:
+#                     if 'DATE' in var.upper():
+#                         if isinstance(input_values[var], date):
+#                             test_row_data[var] = pd.to_datetime(input_values[var])
+#                         else:
+#                             test_row_data[var] = input_values[var]
+#                     else:
+#                         test_row_data[var] = input_values[var]
             
-            for var in formula_vars['bracketed']:
-                clean_var = var
-                if var in input_values:
-                    if 'DATE' in var.upper():
-                        if isinstance(input_values[var], date):
-                            test_row_data[clean_var] = pd.to_datetime(input_values[var])
-                        else:
-                            test_row_data[clean_var] = input_values[var]
-                    else:
-                        test_row_data[clean_var] = input_values[var]
+#             for var in formula_vars['bracketed']:
+#                 clean_var = var
+#                 if var in input_values:
+#                     if 'DATE' in var.upper():
+#                         if isinstance(input_values[var], date):
+#                             test_row_data[clean_var] = pd.to_datetime(input_values[var])
+#                         else:
+#                             test_row_data[clean_var] = input_values[var]
+#                     else:
+#                         test_row_data[clean_var] = input_values[var]
             
-            for var in formula_vars['plain']:
-                if var not in test_row_data:
-                    if var in input_values:
-                        if 'DATE' in var.upper():
-                            if isinstance(input_values[var], date):
-                                test_row_data[var] = pd.to_datetime(input_values[var])
-                            else:
-                                test_row_data[var] = input_values[var]
-                        else:
-                            test_row_data[var] = input_values[var]
+#             for var in formula_vars['plain']:
+#                 if var not in test_row_data:
+#                     if var in input_values:
+#                         if 'DATE' in var.upper():
+#                             if isinstance(input_values[var], date):
+#                                 test_row_data[var] = pd.to_datetime(input_values[var])
+#                             else:
+#                                 test_row_data[var] = input_values[var]
+#                         else:
+#                             test_row_data[var] = input_values[var]
             
-            test_row = pd.Series(test_row_data)
-            working_row = test_row.copy()
+#             test_row = pd.Series(test_row_data)
+#             working_row = test_row.copy()
             
-            for var in formula_vars['derived']:
-                if var in input_values:
-                    if 'DATE' in var.upper():
-                        working_row[var] = pd.to_datetime(input_values[var])
-                    else:
-                        working_row[var] = input_values[var]
+#             for var in formula_vars['derived']:
+#                 if var in input_values:
+#                     if 'DATE' in var.upper():
+#                         working_row[var] = pd.to_datetime(input_values[var])
+#                     else:
+#                         working_row[var] = input_values[var]
             
-            st.markdown("**Derived Formulas Results:**")
-            derived_results = {}
+#             st.markdown("**Derived Formulas Results:**")
+#             derived_results = {}
             
-            for formula_name, formula_info in BASIC_DERIVED_FORMULAS.items():
-                result = calculate_row(working_row, formula_info['formula'], {}, is_pre_mapped=False)
-                derived_results[formula_name] = result
+#             for formula_name, formula_info in BASIC_DERIVED_FORMULAS.items():
+#                 result = calculate_row(working_row, formula_info['formula'], {}, is_pre_mapped=False)
+#                 derived_results[formula_name] = result
                 
-                if result is not None:
-                    working_row[formula_name] = result
+#                 if result is not None:
+#                     working_row[formula_name] = result
                 
-                col_success, col_result = st.columns([3, 1])
-                with col_success:
-                    if result is not None and result != 0:
-                        if isinstance(result, float) and result.is_integer():
-                            st.success(f"✅ {formula_name}: {int(result)}")
-                        else:
-                            st.success(f"✅ {formula_name}: {result:.6f}")
-                    else:
-                        if result == 0:
-                            st.warning(f"⚠️ {formula_name}: {result} (This will cause division issues in dependent formulas)")
-                        else:
-                            st.warning(f"⚠️ {formula_name}: {result} (Check inputs)")
-                with col_result:
-                    if st.button("Debug", key=f"debug_derived_{formula_name}"):
-                        debug_data = {
-                            'formula': formula_info['formula'],
-                            'inputs': {var: str(working_row.get(var, 'Not found')) for var in formula_info['variables']},
-                            'calculated_months': None,
-                            'explanation': f"MONTHS_BETWEEN({working_row.get('TERM_START_DATE', 'missing')}, {working_row.get('FUP_Date', 'missing')}) / 12"
-                        }
-                        if 'FUP_Date' in working_row and 'TERM_START_DATE' in working_row:
-                            debug_data['calculated_months'] = months_between(working_row['TERM_START_DATE'], working_row['FUP_Date'])
-                            debug_data['final_result'] = f"{debug_data['calculated_months']} months ÷ 12 = {debug_data['calculated_months'] / 12:.2f} years"
-                        st.json(debug_data)
+#                 col_success, col_result = st.columns([3, 1])
+#                 with col_success:
+#                     if result is not None and result != 0:
+#                         if isinstance(result, float) and result.is_integer():
+#                             st.success(f"✅ {formula_name}: {int(result)}")
+#                         else:
+#                             st.success(f"✅ {formula_name}: {result:.6f}")
+#                     else:
+#                         if result == 0:
+#                             st.warning(f"⚠️ {formula_name}: {result} (This will cause division issues in dependent formulas)")
+#                         else:
+#                             st.warning(f"⚠️ {formula_name}: {result} (Check inputs)")
+#                 with col_result:
+#                     if st.button("Debug", key=f"debug_derived_{formula_name}"):
+#                         debug_data = {
+#                             'formula': formula_info['formula'],
+#                             'inputs': {var: str(working_row.get(var, 'Not found')) for var in formula_info['variables']},
+#                             'calculated_months': None,
+#                             'explanation': f"MONTHS_BETWEEN({working_row.get('TERM_START_DATE', 'missing')}, {working_row.get('FUP_Date', 'missing')}) / 12"
+#                         }
+#                         if 'FUP_Date' in working_row and 'TERM_START_DATE' in working_row:
+#                             debug_data['calculated_months'] = months_between(working_row['TERM_START_DATE'], working_row['FUP_Date'])
+#                             debug_data['final_result'] = f"{debug_data['calculated_months']} months ÷ 12 = {debug_data['calculated_months'] / 12:.2f} years"
+#                         st.json(debug_data)
             
-            for key, value in derived_results.items():
-                if value is not None:
-                    working_row[key] = value
+#             for key, value in derived_results.items():
+#                 if value is not None:
+#                     working_row[key] = value
             
-            st.markdown("---")
-            st.markdown("**Your Formulas Results:**")
+#             st.markdown("---")
+#             st.markdown("**Your Formulas Results:**")
             
-            if 'formulas' in st.session_state and st.session_state.formulas:
-                formulas_to_process = st.session_state.formulas.copy()
-                processed_formulas = {}
-                max_iterations = len(formulas_to_process) * 2
-                iterations = 0
+#             if 'formulas' in st.session_state and st.session_state.formulas:
+#                 formulas_to_process = st.session_state.formulas.copy()
+#                 processed_formulas = {}
+#                 max_iterations = len(formulas_to_process) * 2
+#                 iterations = 0
                 
-                while formulas_to_process and iterations < max_iterations:
-                    iterations += 1
-                    formula = formulas_to_process.pop(0)
-                    formula_name = formula.get('formula_name', 'Unknown')
-                    formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
+#                 while formulas_to_process and iterations < max_iterations:
+#                     iterations += 1
+#                     formula = formulas_to_process.pop(0)
+#                     formula_name = formula.get('formula_name', 'Unknown')
+#                     formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
                     
-                    if formula_expr:
-                        try:
-                            result = calculate_row(working_row, formula_expr, {}, is_pre_mapped=True)
+#                     if formula_expr:
+#                         try:
+#                             result = calculate_row(working_row, formula_expr, {}, is_pre_mapped=True)
                             
-                            if result is not None:
-                                working_row[formula_name] = result
-                                processed_formulas[formula_name] = result
+#                             if result is not None:
+#                                 working_row[formula_name] = result
+#                                 processed_formulas[formula_name] = result
                                 
-                                col_success, col_result = st.columns([3, 1])
-                                with col_success:
-                                    if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
-                                        st.success(f"✅ {formula_name}: {result:,.6f}")
-                                    else:
-                                        st.success(f"✅ {formula_name}: {result}")
-                                with col_result:
-                                    if st.button("Debug", key=f"debug_formula_{formula_name}"):
-                                        relevant_inputs = {}
-                                        for col in working_row.index:
-                                            if f'[{col}]' in formula_expr or col in formula_expr:
-                                                relevant_inputs[col] = working_row[col]
+#                                 col_success, col_result = st.columns([3, 1])
+#                                 with col_success:
+#                                     if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
+#                                         st.success(f"✅ {formula_name}: {result:,.6f}")
+#                                     else:
+#                                         st.success(f"✅ {formula_name}: {result}")
+#                                 with col_result:
+#                                     if st.button("Debug", key=f"debug_formula_{formula_name}"):
+#                                         relevant_inputs = {}
+#                                         for col in working_row.index:
+#                                             if f'[{col}]' in formula_expr or col in formula_expr:
+#                                                 relevant_inputs[col] = working_row[col]
                                         
-                                        st.json({
-                                            'formula': formula_expr,
-                                            'inputs': relevant_inputs,
-                                            'result': result,
-                                            'available_variables': list(working_row.index)
-                                        })
-                            else:
-                                if iterations < max_iterations - 1:
-                                    formulas_to_process.append(formula)
-                                else:
-                                    st.error(f"❌ {formula_name}: Failed to calculate after all dependencies")
+#                                         st.json({
+#                                             'formula': formula_expr,
+#                                             'inputs': relevant_inputs,
+#                                             'result': result,
+#                                             'available_variables': list(working_row.index)
+#                                         })
+#                             else:
+#                                 if iterations < max_iterations - 1:
+#                                     formulas_to_process.append(formula)
+#                                 else:
+#                                     st.error(f"❌ {formula_name}: Failed to calculate after all dependencies")
                                     
-                        except Exception as e:
-                            st.error(f"❌ {formula_name}: {str(e)}")
+#                         except Exception as e:
+#                             st.error(f"❌ {formula_name}: {str(e)}")
                 
-                if formulas_to_process:
-                    st.warning(f"⚠️ Could not process {len(formulas_to_process)} formulas due to dependency issues")
-                    for formula in formulas_to_process:
-                        st.caption(f"  - {formula.get('formula_name', 'Unknown')}")
+#                 if formulas_to_process:
+#                     st.warning(f"⚠️ Could not process {len(formulas_to_process)} formulas due to dependency issues")
+#                     for formula in formulas_to_process:
+#                         st.caption(f"  - {formula.get('formula_name', 'Unknown')}")
                         
-            else:
-                st.info("No formulas loaded. Upload formulas JSON to test them.")
+#             else:
+#                 st.info("No formulas loaded. Upload formulas JSON to test them.")
 
 # --- Import Functions ---
 def import_mappings_from_json(json_file) -> Dict[str, str]:
