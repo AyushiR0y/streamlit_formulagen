@@ -185,7 +185,7 @@ def add_months(date, months):
     except:
         return None
 
-def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
+def safe_eval(expression: str, variables: Dict[str, str]) -> Any:
     """Safely evaluate a mathematical expression - CORRECTED VERSION"""
     try:
         eval_expr = expression.strip()
@@ -274,13 +274,13 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
             placeholder = f"§§§VAR{idx}§§§"
             placeholder_map[placeholder] = numeric_value
             
-            # Replace the variable with placeholder
+            # Replace the variable with placeholder - use word boundaries for non-bracketed variables
             if var_name.startswith('[') and var_name.endswith(']'):
-                # Bracketed variables - direct string replacement
+                # For bracketed variables, do exact replacement
                 temp_expr = temp_expr.replace(var_name, placeholder)
                 print(f"  Replaced {var_name} → {placeholder} (value: {numeric_value})")
             else:
-                # Non-bracketed - use word boundary regex
+                # For regular variables, use word boundaries
                 pattern = r'\b' + re.escape(var_name) + r'\b'
                 matches = re.findall(pattern, temp_expr, flags=re.IGNORECASE)
                 if matches:
