@@ -56,16 +56,22 @@ BASIC_DERIVED_FORMULAS = {
         'variables': ['TERM_START_DATE']
     }
 }
-# Add this near the top with other constants
+
 FORMULA_ALIASES = {
     # Multiple formula names that should write to/read from the same column
-    'ROP_BENEFIT': 'TOTAL_PREMIUM_PAID',  # ROP_BENEFIT should use TOTAL_PREMIUM_PAID column
-    'TOTAL_PREMIUMS_PAID': 'TOTAL_PREMIUM_PAID',  # Handle plural variation
-    'Income_Benefit_Amount': 'PAID_UP_INCOME_BENEFIT_AMOUNT',  # If income benefit is calculated
-    'SSV1_AMT': 'SSV1',
-    'SSV2_AMT': 'SSV2',
-    'SSV3_AMT': 'SSV3',
+    'ROP_BENEFIT': 'TOTAL_PREMIUM_PAID',
+    'ROP_Benefit': 'TOTAL_PREMIUM_PAID',  # Handle case variations
+    'TOTAL_PREMIUMS_PAID': 'TOTAL_PREMIUM_PAID',
+    'Income_Benefit_Amount': 'PAID_UP_INCOME_BENEFIT_AMOUNT',
+    
+    
+    # Common formula name variations
+    'PAID_UP_SA_ON_DEATH': 'PAID_UP_SA_ON_DEATH',  # Should use calculated column, not map back
+    'Present_Value_of_paid_up_sum_assured_on_death': 'PAID_UP_SA_ON_DEATH',
+    'PAID_UP_INCOME_INSTALLMENT': 'PAID_UP_INCOME_BENEFIT_AMOUNT',  
+
 }
+
 
 def get_output_column_name(formula_name: str, var_to_header_mapping: Dict[str, str]) -> str:
     """
@@ -236,15 +242,19 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         
         result = eval(eval_expr, {"__builtins__": allowed_builtins, "math": math}, {})
         
-        if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
+        # FIX: Accept any numeric result, including from division
+        if isinstance(result, (int, float)):
+            if math.isnan(result) or math.isinf(result):
+                return None
             return float(result)
+        elif isinstance(result, (datetime, date, pd.Timestamp)):
+            return result
         else:
             return None
     
     except Exception as e:
         print(f"Evaluation error: {e} | Expr: {expression}")
         return None
-
 def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str], is_pre_mapped: bool = False) -> Any:
     """
     Calculate formula result for a single row.
@@ -256,7 +266,6 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
     
     # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
-    # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
     bracketed_headers = set()
     if is_pre_mapped:
         pattern = r'\[([^\]]+)\]'
@@ -266,11 +275,9 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         for header_name in bracketed_headers:
             val = None
             
-            # NEW: Strategy 0 - Check if this is an aliased variable
-            actual_column_to_check = header_name
+            # Strategy 0 - Check if this is an aliased variable
             if header_name in FORMULA_ALIASES:
                 actual_column_to_check = FORMULA_ALIASES[header_name]
-                # Try to get value from the aliased column
                 if actual_column_to_check in row.index:
                     val = row[actual_column_to_check]
             
@@ -319,15 +326,22 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             potential_vars.update(v1)
             potential_vars.update(v2)
 
-    # Extract other variables
+    # Extract other variables (but exclude function calls)
     clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', formula_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'\[[^\]]+\]', '', clean_expr)
     
+    # FIX: Remove function calls like MAX(...), MIN(...) before extracting variables
+    clean_expr = re.sub(r'\b(MAX|MIN|ABS|ROUND|SUM|POWER|SQRT|POW)\s*\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
+    
     other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
     potential_vars.update(other_vars)
     
-    python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 'CURRENT_DATE'}
+    # UPDATED: More comprehensive keyword list
+    python_keywords = {
+        'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 
+        'CURRENT_DATE', 'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'POW'
+    }
     potential_vars = potential_vars - python_keywords
     
     # 3. POPULATE var_values with found variables
@@ -339,12 +353,13 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
                 var_values[var_name] = row[aliased_col]
                 continue
         
-        # Strategy 2: Check if it's a calculated column (direct match)
+        # Strategy 2: Check if it's a calculated column (direct match) - PRIORITIZE THIS
         if var_name in row.index:
             var_values[var_name] = row[var_name]
             continue
         
         # Strategy 3: Check if var maps to a header via header_to_var_mapping
+        # ONLY if not found in calculated columns
         mapped_header = None
         
         if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
