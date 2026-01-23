@@ -373,7 +373,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             if f"[{header_name}]" not in var_values:
                 var_values[f"[{header_name}]"] = 0.0
 
-    # 2. IDENTIFY Potential Variables
+    # 2. IDENTIFY Potential Variables (non-bracketed)
     potential_vars = set()
     
     # Extract from MONTHS_BETWEEN
@@ -396,15 +396,18 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             potential_vars.update(v1)
             potential_vars.update(v2)
 
-    # Extract other variables (but exclude function calls)
+    # Extract other variables (but exclude function calls and bracketed ones)
     clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', formula_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'\[[^\]]+\]', '', clean_expr)
     
     # FIX: Remove function calls like MAX(...), MIN(...) before extracting variables
-    clean_expr = re.sub(r'\b(MAX|MIN|ABS|ROUND|SUM|POWER|SQRT|POW)\s*\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
+    # But we need to keep the contents of MAX/MIN to extract variables from inside them
+    temp_expr = clean_expr
+    # Remove the function name but keep contents
+    temp_expr = re.sub(r'\b(MAX|MIN|ABS|ROUND|SUM|POWER|SQRT|POW)\s*\(', '(', temp_expr, flags=re.IGNORECASE)
     
-    other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
+    other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', temp_expr))
     potential_vars.update(other_vars)
     
     # UPDATED: More comprehensive keyword list
@@ -417,12 +420,23 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     # 3. POPULATE var_values with found variables
     # PRIORITY ORDER: Calculated columns > Aliases > Direct headers > Mappings
     for var_name in potential_vars:
+        # Skip if already added as bracketed variable
+        if f"[{var_name}]" in var_values:
+            continue
+            
+        val = None
+        found_source = None
+        
         # PRIORITY 1: Check if it's a calculated column (direct match) - HIGHEST PRIORITY
         if var_name in row.index:
             val = row[var_name]
             if pd.notna(val):
                 var_values[var_name] = val
+                found_source = f"Calculated Column: {var_name}"
+                print(f"✓ Found {var_name} as calculated column = {val}")
                 continue
+            else:
+                print(f"⚠ Found {var_name} in row.index but value is NaN")
         
         # PRIORITY 2: Check if it's an aliased formula (e.g., ROP_BENEFIT → TOTAL_PREMIUM_PAID)
         if var_name in FORMULA_ALIASES:
@@ -431,6 +445,8 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
                 val = row[aliased_col]
                 if pd.notna(val):
                     var_values[var_name] = val
+                    found_source = f"Alias: {var_name} → {aliased_col}"
+                    print(f"✓ Found {var_name} via alias {aliased_col} = {val}")
                     continue
         
         # PRIORITY 3: Check if var maps to a header via header_to_var_mapping
@@ -445,11 +461,34 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             val = row[mapped_header]
             if pd.notna(val):
                 var_values[var_name] = val
+                found_source = f"Mapping: {var_name} → {mapped_header}"
+                print(f"✓ Found {var_name} via mapping {mapped_header} = {val}")
                 continue
+        
+        # PRIORITY 4: Case-insensitive search
+        if val is None:
+            for col in row.index:
+                if col.lower() == var_name.lower():
+                    val = row[col]
+                    if pd.notna(val):
+                        var_values[var_name] = val
+                        found_source = f"Case-insensitive: {var_name} → {col}"
+                        print(f"✓ Found {var_name} case-insensitive as {col} = {val}")
+                        break
         
         # If still not found, default to 0.0
         if var_name not in var_values:
+            print(f"❌ WARNING: Variable '{var_name}' not found in row, defaulting to 0.0")
+            print(f"   Available columns: {list(row.index)[:10]}...")  # Show first 10 columns
             var_values[var_name] = 0.0
+    
+    # DEBUG: Print what variables we're passing to safe_eval
+    print(f"\n▶ Calculating: {formula_expr}")
+    print(f"▶ Variables being passed to safe_eval: {list(var_values.keys())}")
+    if 'TOTAL_PREMIUM_PAID' in var_values:
+        print(f"▶ TOTAL_PREMIUM_PAID value: {var_values['TOTAL_PREMIUM_PAID']}")
+    else:
+        print(f"▶ ❌ TOTAL_PREMIUM_PAID NOT in var_values!")
     
     result = safe_eval(formula_expr, var_values)
     return result
