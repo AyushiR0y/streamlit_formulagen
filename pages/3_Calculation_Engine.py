@@ -263,20 +263,28 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         for pattern, replacement in func_mappings.items():
             eval_expr = re.sub(pattern, replacement, eval_expr, flags=re.IGNORECASE)
         
-        # FIX: Sort variables by length (longest first) to avoid partial replacements
+        # FIX: Sort variables by length (longest first) AND use placeholders to avoid re-replacement
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
         
-        for var_name in sorted_vars:
+        # Create a mapping of placeholders
+        placeholder_map = {}
+        for idx, var_name in enumerate(sorted_vars):
             value = variables[var_name]
             numeric_value = safe_convert_to_number(value)
+            placeholder = f"__VAR_{idx}__"
+            placeholder_map[placeholder] = numeric_value
             
             if var_name.startswith('[') and var_name.endswith(']'):
-                # Bracketed variables - direct replacement
-                eval_expr = eval_expr.replace(var_name, str(numeric_value))
+                # Bracketed variables - direct replacement with placeholder
+                eval_expr = eval_expr.replace(var_name, placeholder)
             else:
                 # Non-bracketed - use word boundary to avoid partial matches
                 pattern = r'\b' + re.escape(var_name) + r'\b'
-                eval_expr = re.sub(pattern, str(numeric_value), eval_expr, flags=re.IGNORECASE)
+                eval_expr = re.sub(pattern, placeholder, eval_expr, flags=re.IGNORECASE)
+        
+        # Now replace all placeholders with actual numeric values wrapped in parentheses
+        for placeholder, numeric_value in placeholder_map.items():
+            eval_expr = eval_expr.replace(placeholder, f"({numeric_value})")
         
         # DEBUG: Print the final expression before evaluation
         print(f"Final eval expression: {eval_expr}")
@@ -305,6 +313,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     """
     Calculate formula result for a single row.
     HYBRID LOGIC: Handles [Bracketed Headers], Existing Columns, and Standard Variables.
+    PRIORITY: Calculated columns > Aliases > Direct headers > Mappings
     """
     var_values = {}
     
@@ -321,32 +330,40 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         for header_name in bracketed_headers:
             val = None
             
-            # Strategy 0 - Check if this is an aliased variable
+            # PRIORITY 1: Check if this is a CALCULATED COLUMN (highest priority)
+            if header_name in row.index:
+                val = row[header_name]
+                if pd.notna(val):
+                    var_values[f"[{header_name}]"] = val
+                    continue
+            
+            # PRIORITY 2: Check if this is an aliased variable
             if header_name in FORMULA_ALIASES:
                 actual_column_to_check = FORMULA_ALIASES[header_name]
                 if actual_column_to_check in row.index:
                     val = row[actual_column_to_check]
+                    if pd.notna(val):
+                        var_values[f"[{header_name}]"] = val
+                        continue
             
-            # Strategy 1: Check if header_name is a variable that maps to a column
-            if val is None and header_name in var_to_header_mapping:
+            # PRIORITY 3: Check if header_name is a variable that maps to a column
+            if header_name in var_to_header_mapping:
                 actual_header = var_to_header_mapping[header_name]
                 if actual_header in row.index:
                     val = row[actual_header]
+                    if pd.notna(val):
+                        var_values[f"[{header_name}]"] = val
+                        continue
             
-            # Strategy 2: Check if header_name itself is a column (direct match)
-            if val is None and header_name in row.index:
-                val = row[header_name]
-            
-            # Strategy 3: Case-insensitive column match
-            if val is None:
-                for col in row.index:
-                    if col.lower() == header_name.lower():
-                        val = row[col]
+            # PRIORITY 4: Case-insensitive column match
+            for col in row.index:
+                if col.lower() == header_name.lower():
+                    val = row[col]
+                    if pd.notna(val):
+                        var_values[f"[{header_name}]"] = val
                         break
             
-            if val is not None:
-                var_values[f"[{header_name}]"] = val
-            else:
+            if f"[{header_name}]" not in var_values:
                 var_values[f"[{header_name}]"] = 0.0
 
     # 2. IDENTIFY Potential Variables
@@ -391,21 +408,25 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     potential_vars = potential_vars - python_keywords
     
     # 3. POPULATE var_values with found variables
+    # PRIORITY ORDER: Calculated columns > Aliases > Direct headers > Mappings
     for var_name in potential_vars:
-        # Strategy 1: Check if it's an aliased formula (e.g., ROP_BENEFIT → TOTAL_PREMIUM_PAID)
+        # PRIORITY 1: Check if it's a calculated column (direct match) - HIGHEST PRIORITY
+        if var_name in row.index:
+            val = row[var_name]
+            if pd.notna(val):
+                var_values[var_name] = val
+                continue
+        
+        # PRIORITY 2: Check if it's an aliased formula (e.g., ROP_BENEFIT → TOTAL_PREMIUM_PAID)
         if var_name in FORMULA_ALIASES:
             aliased_col = FORMULA_ALIASES[var_name]
             if aliased_col in row.index:
-                var_values[var_name] = row[aliased_col]
-                continue
+                val = row[aliased_col]
+                if pd.notna(val):
+                    var_values[var_name] = val
+                    continue
         
-        # Strategy 2: Check if it's a calculated column (direct match) - PRIORITIZE THIS
-        if var_name in row.index:
-            var_values[var_name] = row[var_name]
-            continue
-        
-        # Strategy 3: Check if var maps to a header via header_to_var_mapping
-        # ONLY if not found in calculated columns
+        # PRIORITY 3: Check if var maps to a header via header_to_var_mapping
         mapped_header = None
         
         if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
@@ -414,7 +435,14 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             mapped_header = var_to_header_mapping[var_name]
         
         if mapped_header and mapped_header in row.index:
-            var_values[var_name] = row[mapped_header]
+            val = row[mapped_header]
+            if pd.notna(val):
+                var_values[var_name] = val
+                continue
+        
+        # If still not found, default to 0.0
+        if var_name not in var_values:
+            var_values[var_name] = 0.0
     
     result = safe_eval(formula_expr, var_values)
     return result
@@ -663,213 +691,6 @@ def get_smart_default_value(var_name: str):
     # Default numeric value
     return 1000.0
     
-# def test_formulas_interface():
-#     """Create an interface to test formulas with manual inputs"""
-#     st.markdown("### 🧪 Formula Testing Interface")
-#     st.markdown("Test your formulas and derived calculations before running on full dataset")
-    
-#     formula_vars = {'bracketed': [], 'plain': [], 'derived': []}
-#     if 'formulas' in st.session_state and st.session_state.formulas:
-#         formula_vars = extract_variables_from_formulas(st.session_state.formulas)
-    
-#     with st.expander("🔧 Test Single Formula", expanded=True):
-#         col1, col2 = st.columns([1, 2])
-        
-#         with col1:
-#             st.markdown("#### Input Values")
-            
-#             input_values = {}
-            
-#             if formula_vars['derived']:
-#                 st.markdown("**Derived Formula Variables:**")
-#                 for var in formula_vars['derived']:
-#                     default_value = get_smart_default_value(var)
-#                     if 'DATE' in var.upper():
-#                         input_values[var] = st.date_input(var, value=default_value)
-#                     elif 'TERM' in var.upper() and var != 'FUP_Date':
-#                         input_values[var] = st.number_input(f"{var}", value=default_value, min_value=1.0)
-#                     else:
-#                         input_values[var] = st.date_input(var, value=default_value)
-            
-#             if formula_vars['bracketed']:
-#                 st.markdown("**Formula Variables (from mapped expressions):**")
-#                 for var in formula_vars['bracketed']:
-#                     clean_var = var.replace('_', ' ').title()
-#                     default_value = get_smart_default_value(var)
-                    
-#                     if 'DATE' in var.upper():
-#                         input_values[var] = st.date_input(f"{clean_var}", value=default_value)
-#                     elif 'FACTOR' in var.upper():
-#                         # FIX: Removed max_value=1.0. Factors can be greater than 1.
-#                         input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, step=0.01)
-#                     elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
-#                         input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
-#                     else:
-#                         if isinstance(default_value, date):
-#                             default_value = default_value.year
-#                         input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
-            
-#             if formula_vars['plain']:
-#                 st.markdown("**Additional Formula Variables:**")
-#                 for var in formula_vars['plain']:
-#                     if var not in input_values:
-#                         clean_var = var.replace('_', ' ').title()
-#                         default_value = get_smart_default_value(var)
-                        
-#                         if 'DATE' in var.upper():
-#                             input_values[var] = st.date_input(f"{clean_var}", value=default_value)
-#                         elif 'FACTOR' in var.upper():
-#                             # FIX: Removed max_value=1.0. Factors can be greater than 1.
-#                             input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0, step=0.01)
-#                         elif any(term in var.upper() for term in ['PREMIUM', 'AMOUNT', 'BENEFIT', 'SUM', 'ROP']):
-#                             input_values[var] = st.number_input(f"{clean_var}", value=default_value, min_value=0.0)
-#                         else:
-#                             input_values[var] = st.number_input(f"{var}", value=default_value, min_value=0.0)
-            
-#         with col2:
-#             st.markdown("#### Test Results")
-            
-#             test_row_data = {}
-            
-#             for var in formula_vars['derived']:
-#                 if var in input_values:
-#                     if 'DATE' in var.upper():
-#                         if isinstance(input_values[var], date):
-#                             test_row_data[var] = pd.to_datetime(input_values[var])
-#                         else:
-#                             test_row_data[var] = input_values[var]
-#                     else:
-#                         test_row_data[var] = input_values[var]
-            
-#             for var in formula_vars['bracketed']:
-#                 clean_var = var
-#                 if var in input_values:
-#                     if 'DATE' in var.upper():
-#                         if isinstance(input_values[var], date):
-#                             test_row_data[clean_var] = pd.to_datetime(input_values[var])
-#                         else:
-#                             test_row_data[clean_var] = input_values[var]
-#                     else:
-#                         test_row_data[clean_var] = input_values[var]
-            
-#             for var in formula_vars['plain']:
-#                 if var not in test_row_data:
-#                     if var in input_values:
-#                         if 'DATE' in var.upper():
-#                             if isinstance(input_values[var], date):
-#                                 test_row_data[var] = pd.to_datetime(input_values[var])
-#                             else:
-#                                 test_row_data[var] = input_values[var]
-#                         else:
-#                             test_row_data[var] = input_values[var]
-            
-#             test_row = pd.Series(test_row_data)
-#             working_row = test_row.copy()
-            
-#             for var in formula_vars['derived']:
-#                 if var in input_values:
-#                     if 'DATE' in var.upper():
-#                         working_row[var] = pd.to_datetime(input_values[var])
-#                     else:
-#                         working_row[var] = input_values[var]
-            
-#             st.markdown("**Derived Formulas Results:**")
-#             derived_results = {}
-            
-#             for formula_name, formula_info in BASIC_DERIVED_FORMULAS.items():
-#                 result = calculate_row(working_row, formula_info['formula'], {}, is_pre_mapped=False)
-#                 derived_results[formula_name] = result
-                
-#                 if result is not None:
-#                     working_row[formula_name] = result
-                
-#                 col_success, col_result = st.columns([3, 1])
-#                 with col_success:
-#                     if result is not None and result != 0:
-#                         if isinstance(result, float) and result.is_integer():
-#                             st.success(f"✅ {formula_name}: {int(result)}")
-#                         else:
-#                             st.success(f"✅ {formula_name}: {result:.6f}")
-#                     else:
-#                         if result == 0:
-#                             st.warning(f"⚠️ {formula_name}: {result} (This will cause division issues in dependent formulas)")
-#                         else:
-#                             st.warning(f"⚠️ {formula_name}: {result} (Check inputs)")
-#                 with col_result:
-#                     if st.button("Debug", key=f"debug_derived_{formula_name}"):
-#                         debug_data = {
-#                             'formula': formula_info['formula'],
-#                             'inputs': {var: str(working_row.get(var, 'Not found')) for var in formula_info['variables']},
-#                             'calculated_months': None,
-#                             'explanation': f"MONTHS_BETWEEN({working_row.get('TERM_START_DATE', 'missing')}, {working_row.get('FUP_Date', 'missing')}) / 12"
-#                         }
-#                         if 'FUP_Date' in working_row and 'TERM_START_DATE' in working_row:
-#                             debug_data['calculated_months'] = months_between(working_row['TERM_START_DATE'], working_row['FUP_Date'])
-#                             debug_data['final_result'] = f"{debug_data['calculated_months']} months ÷ 12 = {debug_data['calculated_months'] / 12:.2f} years"
-#                         st.json(debug_data)
-            
-#             for key, value in derived_results.items():
-#                 if value is not None:
-#                     working_row[key] = value
-            
-#             st.markdown("---")
-#             st.markdown("**Your Formulas Results:**")
-            
-#             if 'formulas' in st.session_state and st.session_state.formulas:
-#                 formulas_to_process = st.session_state.formulas.copy()
-#                 processed_formulas = {}
-#                 max_iterations = len(formulas_to_process) * 2
-#                 iterations = 0
-                
-#                 while formulas_to_process and iterations < max_iterations:
-#                     iterations += 1
-#                     formula = formulas_to_process.pop(0)
-#                     formula_name = formula.get('formula_name', 'Unknown')
-#                     formula_expr = formula.get('mapped_expression', formula.get('formula_expression', ''))
-                    
-#                     if formula_expr:
-#                         try:
-#                             result = calculate_row(working_row, formula_expr, {}, is_pre_mapped=True)
-                            
-#                             if result is not None:
-#                                 working_row[formula_name] = result
-#                                 processed_formulas[formula_name] = result
-                                
-#                                 col_success, col_result = st.columns([3, 1])
-#                                 with col_success:
-#                                     if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
-#                                         st.success(f"✅ {formula_name}: {result:,.6f}")
-#                                     else:
-#                                         st.success(f"✅ {formula_name}: {result}")
-#                                 with col_result:
-#                                     if st.button("Debug", key=f"debug_formula_{formula_name}"):
-#                                         relevant_inputs = {}
-#                                         for col in working_row.index:
-#                                             if f'[{col}]' in formula_expr or col in formula_expr:
-#                                                 relevant_inputs[col] = working_row[col]
-                                        
-#                                         st.json({
-#                                             'formula': formula_expr,
-#                                             'inputs': relevant_inputs,
-#                                             'result': result,
-#                                             'available_variables': list(working_row.index)
-#                                         })
-#                             else:
-#                                 if iterations < max_iterations - 1:
-#                                     formulas_to_process.append(formula)
-#                                 else:
-#                                     st.error(f"❌ {formula_name}: Failed to calculate after all dependencies")
-                                    
-#                         except Exception as e:
-#                             st.error(f"❌ {formula_name}: {str(e)}")
-                
-#                 if formulas_to_process:
-#                     st.warning(f"⚠️ Could not process {len(formulas_to_process)} formulas due to dependency issues")
-#                     for formula in formulas_to_process:
-#                         st.caption(f"  - {formula.get('formula_name', 'Unknown')}")
-                        
-#             else:
-#                 st.info("No formulas loaded. Upload formulas JSON to test them.")
 
 # --- Import Functions ---
 def import_mappings_from_json(json_file) -> Dict[str, str]:
@@ -980,7 +801,6 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
                 # Extract variables used
                 var_values = {}
                 
-                # In show_detailed_calculations function, update the variable lookup section:
 
                 if is_pre_mapped:
                     # Bracketed variables
@@ -994,26 +814,31 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
                         val = None
                         source = "Not Found"
                         
-                        # Check alias
-                        if header_name in FORMULA_ALIASES:
-                            aliased_col = FORMULA_ALIASES[header_name]
-                            if aliased_col in row.index:
-                                val = row[aliased_col]
-                                source = f"Alias → {aliased_col}"
-                        
-                        # Check mapping
-                        if val is None and header_name in var_to_header_mapping:
-                            actual_header = var_to_header_mapping[header_name]
-                            if actual_header in row.index:
-                                val = row[actual_header]
-                                source = f"Mapping → {actual_header}"
-                        
-                        # Direct column
-                        if val is None and header_name in row.index:
+                        # PRIORITY 1: Calculated column
+                        if header_name in row.index:
                             val = row[header_name]
-                            source = "Direct Column"
+                            if pd.notna(val):
+                                source = "Calculated Column"
                         
-                        if val is None:
+                        # PRIORITY 2: Check alias
+                        if val is None or pd.isna(val):
+                            if header_name in FORMULA_ALIASES:
+                                aliased_col = FORMULA_ALIASES[header_name]
+                                if aliased_col in row.index:
+                                    val = row[aliased_col]
+                                    if pd.notna(val):
+                                        source = f"Alias → {aliased_col}"
+                        
+                        # PRIORITY 3: Check mapping
+                        if val is None or pd.isna(val):
+                            if header_name in var_to_header_mapping:
+                                actual_header = var_to_header_mapping[header_name]
+                                if actual_header in row.index:
+                                    val = row[actual_header]
+                                    if pd.notna(val):
+                                        source = f"Mapping → {actual_header}"
+                        
+                        if val is None or pd.isna(val):
                             val = 0.0
                             source = "Default (0.0)"
                         
@@ -1041,32 +866,37 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
                         val = None
                         source = "Not Found"
                         
-                        # Check alias
-                        if var_name in FORMULA_ALIASES:
-                            aliased_col = FORMULA_ALIASES[var_name]
-                            if aliased_col in row.index:
-                                val = row[aliased_col]
-                                source = f"Alias → {aliased_col}"
-                        
-                        # Direct column
-                        if val is None and var_name in row.index:
+                        # PRIORITY 1: Calculated column
+                        if var_name in row.index:
                             val = row[var_name]
-                            source = "Calculated Column"
+                            if pd.notna(val):
+                                source = "Calculated Column"
                         
-                        # Check mapping
-                        if val is None:
+                        # PRIORITY 2: Check alias
+                        if val is None or pd.isna(val):
+                            if var_name in FORMULA_ALIASES:
+                                aliased_col = FORMULA_ALIASES[var_name]
+                                if aliased_col in row.index:
+                                    val = row[aliased_col]
+                                    if pd.notna(val):
+                                        source = f"Alias → {aliased_col}"
+                        
+                        # PRIORITY 3: Check mapping
+                        if val is None or pd.isna(val):
                             if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
                                 mapped_header = header_to_var_mapping[var_name]
                                 if mapped_header in row.index:
                                     val = row[mapped_header]
-                                    source = f"Mapping → {mapped_header}"
+                                    if pd.notna(val):
+                                        source = f"Mapping → {mapped_header}"
                             elif var_name in var_to_header_mapping:
                                 mapped_header = var_to_header_mapping[var_name]
                                 if mapped_header in row.index:
                                     val = row[mapped_header]
-                                    source = f"Reverse Mapping → {mapped_header}"
+                                    if pd.notna(val):
+                                        source = f"Reverse Mapping → {mapped_header}"
                         
-                        if val is None:
+                        if val is None or pd.isna(val):
                             val = 0.0
                             source = "Default (0.0)"
                         
@@ -1119,32 +949,37 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
                         val = None
                         source = "Not Found"
                         
-                        # Check alias
-                        if var_name in FORMULA_ALIASES:
-                            aliased_col = FORMULA_ALIASES[var_name]
-                            if aliased_col in row.index:
-                                val = row[aliased_col]
-                                source = f"Alias → {aliased_col}"
-                        
-                        # Direct column
-                        if val is None and var_name in row.index:
+                        # PRIORITY 1: Calculated column
+                        if var_name in row.index:
                             val = row[var_name]
-                            source = "Calculated Column"
+                            if pd.notna(val):
+                                source = "Calculated Column"
                         
-                        # Check mapping
-                        if val is None:
+                        # PRIORITY 2: Check alias
+                        if val is None or pd.isna(val):
+                            if var_name in FORMULA_ALIASES:
+                                aliased_col = FORMULA_ALIASES[var_name]
+                                if aliased_col in row.index:
+                                    val = row[aliased_col]
+                                    if pd.notna(val):
+                                        source = f"Alias → {aliased_col}"
+                        
+                        # PRIORITY 3: Check mapping
+                        if val is None or pd.isna(val):
                             if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
                                 mapped_header = header_to_var_mapping[var_name]
                                 if mapped_header in row.index:
                                     val = row[mapped_header]
-                                    source = f"Mapping → {mapped_header}"
+                                    if pd.notna(val):
+                                        source = f"Mapping → {mapped_header}"
                             elif var_name in var_to_header_mapping:
                                 mapped_header = var_to_header_mapping[var_name]
                                 if mapped_header in row.index:
                                     val = row[mapped_header]
-                                    source = f"Reverse Mapping → {mapped_header}"
+                                    if pd.notna(val):
+                                        source = f"Reverse Mapping → {mapped_header}"
                         
-                        if val is None:
+                        if val is None or pd.isna(val):
                             val = 0.0
                             source = "Default (0.0)"
                         
