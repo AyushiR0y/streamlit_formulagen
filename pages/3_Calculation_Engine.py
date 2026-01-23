@@ -56,7 +56,29 @@ BASIC_DERIVED_FORMULAS = {
         'variables': ['TERM_START_DATE']
     }
 }
+# Add this near the top with other constants
+FORMULA_ALIASES = {
+    # Multiple formula names that should write to/read from the same column
+    'ROP_BENEFIT': 'TOTAL_PREMIUM_PAID',  # ROP_BENEFIT should use TOTAL_PREMIUM_PAID column
+    'TOTAL_PREMIUMS_PAID': 'TOTAL_PREMIUM_PAID',  # Handle plural variation
+    'Income_Benefit_Amount': 'PAID_UP_INCOME_BENEFIT_AMOUNT',  # If income benefit is calculated
+}
 
+def get_output_column_name(formula_name: str, var_to_header_mapping: Dict[str, str]) -> str:
+    """
+    Determine the actual column name to use for a formula.
+    Checks: aliases → mappings → formula name itself
+    """
+    # Check if this formula has an alias
+    if formula_name in FORMULA_ALIASES:
+        return FORMULA_ALIASES[formula_name]
+    
+    # Check if formula maps to a specific header
+    if formula_name in var_to_header_mapping:
+        return var_to_header_mapping[formula_name]
+    
+    # Default to formula name itself
+    return formula_name
 def get_derived_formulas() -> List[Dict]:
     """Convert derived formulas to standard formula format"""
     formulas = []
@@ -225,7 +247,6 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     Calculate formula result for a single row.
     HYBRID LOGIC: Handles [Bracketed Headers], Existing Columns, and Standard Variables.
     """
-
     var_values = {}
     
     # Create reverse mapping: variable_name -> header_name
@@ -241,23 +262,22 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         for header_name in bracketed_headers:
             val = None
             
-            # FIX: First check if this header_name is actually a variable that maps to a column
+            # Strategy 1: Check if header_name is a variable that maps to a column
             if header_name in var_to_header_mapping:
-                # This is a variable name, get the actual header it maps to
                 actual_header = var_to_header_mapping[header_name]
                 if actual_header in row.index:
                     val = row[actual_header]
             
-            # If not found via mapping, try direct column lookup
+            # Strategy 2: Check if header_name itself is a column (direct match)
+            if val is None and header_name in row.index:
+                val = row[header_name]
+            
+            # Strategy 3: Case-insensitive column match
             if val is None:
-                if header_name in row.index:
-                    val = row[header_name]
-                else:
-                    # Case-insensitive match
-                    for col in row.index:
-                        if col.lower() == header_name.lower():
-                            val = row[col]
-                            break
+                for col in row.index:
+                    if col.lower() == header_name.lower():
+                        val = row[col]
+                        break
             
             if val is not None:
                 var_values[f"[{header_name}]"] = val
@@ -267,18 +287,17 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     # 2. IDENTIFY Potential Variables
     potential_vars = set()
     
-    # A) FIX: Extract variables inside MONTHS_BETWEEN first
+    # Extract from MONTHS_BETWEEN
     if 'MONTHS_BETWEEN' in formula_expr.upper():
         pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
         matches = re.findall(pattern, formula_expr, flags=re.IGNORECASE)
         for match in matches:
-            # Extract words from arguments (e.g., "VAR1", "VAR2" from "VAR1, VAR2")
             v1 = re.findall(r'\b\w+\b', match[0])
             v2 = re.findall(r'\b\w+\b', match[1])
             potential_vars.update(v1)
             potential_vars.update(v2)
             
-    # B) FIX: Extract variables inside ADD_MONTHS
+    # Extract from ADD_MONTHS
     if 'ADD_MONTHS' in formula_expr.upper():
         pattern = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
         matches = re.findall(pattern, formula_expr, flags=re.IGNORECASE)
@@ -288,8 +307,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             potential_vars.update(v1)
             potential_vars.update(v2)
 
-    # C) Find remaining variables in the cleaned expression
-    # We remove functions first to avoid matching function names or internal operators
+    # Extract other variables
     clean_expr = re.sub(r'MONTHS_BETWEEN\([^)]+\)', '', formula_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'ADD_MONTHS\([^)]+\)', '', clean_expr, flags=re.IGNORECASE)
     clean_expr = re.sub(r'\[[^\]]+\]', '', clean_expr)
@@ -297,20 +315,24 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
     potential_vars.update(other_vars)
     
-    # Filter out Python keywords and specific function names
     python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 'CURRENT_DATE'}
     potential_vars = potential_vars - python_keywords
     
     # 3. POPULATE var_values with found variables
-    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
-    
     for var_name in potential_vars:
-        # A) Check if it's an existing column (e.g. 'no_of_premium_paid' calculated earlier)
+        # Strategy 1: Check if it's an aliased formula (e.g., ROP_BENEFIT → TOTAL_PREMIUM_PAID)
+        if var_name in FORMULA_ALIASES:
+            aliased_col = FORMULA_ALIASES[var_name]
+            if aliased_col in row.index:
+                var_values[var_name] = row[aliased_col]
+                continue
+        
+        # Strategy 2: Check if it's a calculated column (direct match)
         if var_name in row.index:
             var_values[var_name] = row[var_name]
             continue
         
-        # B) Check if it maps via header_to_var_mapping
+        # Strategy 3: Check if var maps to a header via header_to_var_mapping
         mapped_header = None
         
         if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
@@ -318,19 +340,11 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         elif var_name in var_to_header_mapping:
             mapped_header = var_to_header_mapping[var_name]
         
-        if mapped_header:
-            if mapped_header in row.index:
-                var_values[var_name] = row[mapped_header]
-            else:
-                # Case-insensitive match
-                for col in row.index:
-                    if col.lower() == str(mapped_header).lower():
-                        var_values[var_name] = row[col]
-                        break
+        if mapped_header and mapped_header in row.index:
+            var_values[var_name] = row[mapped_header]
     
     result = safe_eval(formula_expr, var_values)
     return result
-
 def find_matching_column(formula_name: str, df_columns: List[str], header_to_var_mapping: Dict[str, str]) -> str:
     """Find the best matching column for a formula"""
     formula_lower = formula_name.lower().replace('_', '').replace(' ', '')
@@ -370,6 +384,9 @@ def run_calculations(df: pd.DataFrame,
     result_df = df.copy()
     calculation_results = []
     
+    # Create reverse mapping: variable_name -> header_name
+    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
+    
     all_formulas = []
     if include_derived:
         derived = get_derived_formulas()
@@ -382,31 +399,27 @@ def run_calculations(df: pd.DataFrame,
     
     st.info(f"🔧 Processing {len(all_formulas)} total formulas in order")
     
-    df_columns = df.columns.tolist()
-    
     for formula in all_formulas:
         formula_name = formula.get('formula_name', 'Unknown')
         formula_expr = formula.get('formula_expression', '')
         is_pre_mapped = formula.get('is_pre_mapped', False)
         
-        # FIX: Determine output column based on mapping
-        output_col = formula_name  # Default to formula name
+        # UPDATED: Determine output column using alias/mapping logic
+        output_col = get_output_column_name(formula_name, var_to_header_mapping)
         
-        # Check if this formula name has a mapping to a different column
-        var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
-        if formula_name in var_to_header_mapping:
-            # Use the mapped column name instead
-            output_col = var_to_header_mapping[formula_name]
-            st.info(f"📍 **{formula_name}** mapped to column: **{output_col}**")
-        else:
-            # Otherwise use existing matching logic
-            output_col = find_matching_column(formula_name, df_columns, header_to_var_mapping)
+        # Show if we're using an alias or mapping
+        if output_col != formula_name:
+            if formula_name in FORMULA_ALIASES:
+                st.info(f"🔗 **{formula_name}** → aliased to column: **{output_col}**")
+            else:
+                st.info(f"📍 **{formula_name}** → mapped to column: **{output_col}**")
         
+        # Create output column if it doesn't exist
         col_existed = output_col in result_df.columns
         
         if not col_existed:
             result_df[output_col] = np.nan
-            st.info(f"📝 **{formula_name}** → Creating new column: **{output_col}**")
+            st.info(f"📝 Creating new column: **{output_col}**")
         else:
             st.info(f"✏️ **{formula_name}** → Writing to existing: **{output_col}**")
         
@@ -416,6 +429,7 @@ def run_calculations(df: pd.DataFrame,
         success_count = 0
         total_rows = len(result_df)
         
+        # Debug first row
         if total_rows > 0:
             first_row = result_df.iloc[0]
             
@@ -427,14 +441,24 @@ def run_calculations(df: pd.DataFrame,
                     st.write(f"**Headers in brackets:** {headers_in_formula}")
                     
                     for h in headers_in_formula:
-                        val = first_row.get(h, "Not Found")
-                        st.write(f"  - `[{h}]` = {val}")
+                        # Check via mapping
+                        val = None
+                        if h in var_to_header_mapping:
+                            actual_col = var_to_header_mapping[h]
+                            val = first_row.get(actual_col, "Not found")
+                            st.write(f"  - `[{h}]` → `{actual_col}` = {val}")
+                        elif h in first_row.index:
+                            val = first_row[h]
+                            st.write(f"  - `[{h}]` (direct) = {val}")
+                        else:
+                            st.write(f"  - `[{h}]` = Not Found")
                 else:
                     st.write("**Mode:** Variable Mapping / Hybrid")
                     st.write(f"**Variables used:** {formula.get('variables_used', 'Unknown')}")
                 
                 first_result = calculate_row(first_row, formula_expr, header_to_var_mapping, is_pre_mapped=is_pre_mapped)
                 st.write(f"**Test Result:** {first_result}")
+                st.write(f"**Will write to column:** {output_col}")
                 
                 if first_result is None:
                     st.error("⚠️ Test calculation returned None - check formula, headers, and variables")
@@ -442,6 +466,7 @@ def run_calculations(df: pd.DataFrame,
         progress_bar = st.progress(0)
         status_text = st.empty()
         
+        # ROW-BY-ROW CALCULATION
         for idx in range(len(result_df)):
             try:
                 row = result_df.iloc[idx]
@@ -452,6 +477,7 @@ def run_calculations(df: pd.DataFrame,
                         errors.append(f"Row {idx}: Calculation returned None")
                     result_df.at[result_df.index[idx], output_col] = np.nan
                 else:
+                    # Write to the determined output column
                     result_df.at[result_df.index[idx], output_col] = result
                     success_count += 1
             
@@ -476,7 +502,7 @@ def run_calculations(df: pd.DataFrame,
         
         if non_null_count > 0:
             sample_vals = result_df[output_col].dropna().head(3).tolist()
-            st.write(f"Sample values: {sample_vals}")
+            st.write(f"Sample values in **{output_col}**: {sample_vals}")
         
         calculation_results.append(CalculationResult(
             formula_name=f"{formula_name} → {output_col}",
