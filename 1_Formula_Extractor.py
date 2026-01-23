@@ -118,9 +118,9 @@ DEFAULT_TARGET_OUTPUT_VARIABLES = [
     'PAID_UP_SA',
     'PAID_UP_SA_ON_DEATH',
     'paid_up_income_benefit_amount',
-    'SSV1',
-    'SSV2',
-    'SSV3',
+    'SSV1_AMT',
+    'SSV2_AMT',
+    'SSV3_AMT',
     'SSV',
     'SURRENDER_PAID_AMOUNT',
 ]
@@ -998,7 +998,6 @@ def main():
 
     # Display Results
     if st.session_state.extraction_result:
-        st.subheader("Extraction Summary")
 
         result = st.session_state.extraction_result
 
