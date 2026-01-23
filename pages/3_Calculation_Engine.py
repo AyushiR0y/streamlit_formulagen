@@ -227,6 +227,9 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     """
     var_values = {}
     
+    # Create reverse mapping: variable_name -> header_name
+    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
+    
     # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
     bracketed_headers = set()
     if is_pre_mapped:
@@ -236,13 +239,24 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         
         for header_name in bracketed_headers:
             val = None
-            if header_name in row.index:
-                val = row[header_name]
-            else:
-                for col in row.index:
-                    if col.lower() == header_name.lower():
-                        val = row[col]
-                        break
+            
+            # FIX: First check if this header_name is actually a variable that maps to a column
+            if header_name in var_to_header_mapping:
+                # This is a variable name, get the actual header it maps to
+                actual_header = var_to_header_mapping[header_name]
+                if actual_header in row.index:
+                    val = row[actual_header]
+            
+            # If not found via mapping, try direct column lookup
+            if val is None:
+                if header_name in row.index:
+                    val = row[header_name]
+                else:
+                    # Case-insensitive match
+                    for col in row.index:
+                        if col.lower() == header_name.lower():
+                            val = row[col]
+                            break
             
             if val is not None:
                 var_values[f"[{header_name}]"] = val
@@ -665,7 +679,7 @@ def test_formulas_interface():
                         if isinstance(result, float) and result.is_integer():
                             st.success(f"✅ {formula_name}: {int(result)}")
                         else:
-                            st.success(f"✅ {formula_name}: {result:.2f}")
+                            st.success(f"✅ {formula_name}: {result:.6f}")
                     else:
                         if result == 0:
                             st.warning(f"⚠️ {formula_name}: {result} (This will cause division issues in dependent formulas)")
@@ -714,7 +728,7 @@ def test_formulas_interface():
                                 col_success, col_result = st.columns([3, 1])
                                 with col_success:
                                     if isinstance(result, (int, float)) and not (isinstance(result, float) and (math.isnan(result) or math.isinf(result))):
-                                        st.success(f"✅ {formula_name}: {result:,.2f}")
+                                        st.success(f"✅ {formula_name}: {result:,.6f}")
                                     else:
                                         st.success(f"✅ {formula_name}: {result}")
                                 with col_result:
