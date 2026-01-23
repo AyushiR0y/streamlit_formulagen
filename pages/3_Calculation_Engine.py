@@ -485,10 +485,6 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     # DEBUG: Print what variables we're passing to safe_eval
     print(f"\n▶ Calculating: {formula_expr}")
     print(f"▶ Variables being passed to safe_eval: {list(var_values.keys())}")
-    if 'TOTAL_PREMIUM_PAID' in var_values:
-        print(f"▶ TOTAL_PREMIUM_PAID value: {var_values['TOTAL_PREMIUM_PAID']}")
-    else:
-        print(f"▶ ❌ TOTAL_PREMIUM_PAID NOT in var_values!")
     
     result = safe_eval(formula_expr, var_values)
     return result
