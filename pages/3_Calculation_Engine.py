@@ -103,6 +103,8 @@ FORMULA_ALIASES = {
     'PAID_UP_SA_ON_DEATH': 'PAID_UP_SA_ON_DEATH',  # Should use calculated column, not map back
     'Present_Value_of_paid_up_sum_assured_on_death': 'PAID_UP_SA_ON_DEATH',
     'PAID_UP_INCOME_INSTALLMENT': 'PAID_UP_INCOME_BENEFIT_AMOUNT',  
+    'PAID_UP_SA_ON_DEATH':'PAIDUP_VALUE',
+    'SURRENDER_PAID_AMOUNT':'PV'
 
 }
 
