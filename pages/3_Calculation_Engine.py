@@ -136,20 +136,17 @@ def get_derived_formulas() -> List[Dict]:
     return formulas
 
 # --- Helper Functions ---
+
 def safe_convert_to_number(value: Any) -> float:
     """Safely convert various types to float"""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return 0.0
-    
     if isinstance(value, str) and (value == '' or value.strip() == ''):
         return 0.0
-    
     if isinstance(value, (int, float)) and not pd.isna(value):
         return float(value)
-    
     if isinstance(value, (datetime, date, pd.Timestamp)):
         return float(value.year)
-    
     if isinstance(value, str):
         try:
             cleaned = value.replace(',', '').replace('$', '').replace('%', '').strip()
@@ -162,7 +159,6 @@ def safe_convert_to_number(value: Any) -> float:
                 return float(parsed_date.year)
             except:
                 return 0.0
-    
     return 0.0
 
 def months_between(date1, date2):
@@ -170,10 +166,8 @@ def months_between(date1, date2):
     try:
         if pd.isna(date1) or pd.isna(date2):
             return 0
-        
         d1 = pd.to_datetime(date1)
         d2 = pd.to_datetime(date2)
-        
         months = (d2.year - d1.year) * 12 + (d2.month - d1.month)
         return float(months)
     except:
@@ -184,6 +178,7 @@ def add_months(date, months):
     try:
         if pd.isna(date):
             return None
+        from dateutil.relativedelta import relativedelta
         d = pd.to_datetime(date)
         result = d + relativedelta(months=int(months))
         return result
@@ -191,16 +186,23 @@ def add_months(date, months):
         return None
 
 def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
-    """Safely evaluate - Version 2 with better MAX handling"""
+    """Safely evaluate a mathematical expression - CORRECTED VERSION"""
     try:
         eval_expr = expression.strip()
+        
+        print(f"\n{'='*60}")
+        print(f"🔍 DEBUGGING safe_eval")
+        print(f"{'='*60}")
+        print(f"Original expression: {expression}")
+        print(f"Variables passed: {variables}")
 
+        # Remove assignment if present
         if '=' in eval_expr and not any(op in eval_expr for op in ['==', '!=', '<=', '>=']):
             parts = eval_expr.split('=')
             if len(parts) >= 2:
                 eval_expr = parts[-1].strip()
 
-        # Process date functions
+        # Process MONTHS_BETWEEN
         if 'MONTHS_BETWEEN' in eval_expr.upper():
             pattern = r'MONTHS_BETWEEN\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
             matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
@@ -211,6 +213,7 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                 result = months_between(val1, val2)
                 eval_expr = eval_expr[:match.start()] + str(result) + eval_expr[match.end():]
         
+        # Process ADD_MONTHS
         if 'ADD_MONTHS' in eval_expr.upper():
             pattern = r'ADD_MONTHS\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)'
             matches = list(re.finditer(pattern, eval_expr, re.IGNORECASE))
@@ -233,12 +236,13 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
                 else:
                     eval_expr = eval_expr[:match.start()] + '0' + eval_expr[match.end():]
         
+        # Process CURRENT_DATE
         if 'CURRENT_DATE' in eval_expr.upper():
             current_date = datetime.now()
             eval_expr = re.sub(r'\bCURRENT_DATE\b', f"'{current_date.strftime('%Y-%m-%d')}'", 
                               eval_expr, flags=re.IGNORECASE)
         
-        # Map functions - case insensitive
+        # Map function names (case insensitive)
         func_mappings = {
             r'\bMAX\s*\(': 'max(',
             r'\bMIN\s*\(': 'min(',
@@ -252,56 +256,92 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         for pattern, replacement in func_mappings.items():
             eval_expr = re.sub(pattern, replacement, eval_expr, flags=re.IGNORECASE)
         
-        # Replace variables
+        print(f"After function mapping: {eval_expr}")
+        
+        # CRITICAL FIX: Replace variables in a single pass with unique placeholders
+        # Sort by length (longest first) to prevent partial matches
         sorted_vars = sorted(variables.keys(), key=len, reverse=True)
-        token_map = {}
+        
+        # Create unique placeholders that won't conflict
+        placeholder_map = {}
+        temp_expr = eval_expr
         
         for idx, var_name in enumerate(sorted_vars):
             value = variables[var_name]
             numeric_value = safe_convert_to_number(value)
-            token = f"___VAR_{idx}___"
-            token_map[token] = numeric_value
             
+            # Use a placeholder that's guaranteed not to appear in formulas
+            placeholder = f"§§§VAR{idx}§§§"
+            placeholder_map[placeholder] = numeric_value
+            
+            # Replace the variable with placeholder
             if var_name.startswith('[') and var_name.endswith(']'):
-                eval_expr = eval_expr.replace(var_name, token)
+                # Bracketed variables - direct string replacement
+                temp_expr = temp_expr.replace(var_name, placeholder)
+                print(f"  Replaced {var_name} → {placeholder} (value: {numeric_value})")
             else:
+                # Non-bracketed - use word boundary regex
                 pattern = r'\b' + re.escape(var_name) + r'\b'
-                eval_expr = re.sub(pattern, token, eval_expr, flags=re.IGNORECASE)
+                matches = re.findall(pattern, temp_expr, flags=re.IGNORECASE)
+                if matches:
+                    temp_expr = re.sub(pattern, placeholder, temp_expr, flags=re.IGNORECASE)
+                    print(f"  Replaced {var_name} → {placeholder} (value: {numeric_value})")
         
-        # Replace tokens with values
-        for token, numeric_value in token_map.items():
-            # Use repr() to ensure proper formatting
-            eval_expr = eval_expr.replace(token, repr(numeric_value))
+        print(f"After variable → placeholder: {temp_expr}")
         
-        # Convert percentages - ensure proper float division
-        eval_expr = re.sub(r'(\d+(?:\.\d+)?)\s*%', r'((\1)/100.0)', eval_expr)
+        # Now replace all placeholders with actual numbers
+        for placeholder, numeric_value in placeholder_map.items():
+            temp_expr = temp_expr.replace(placeholder, str(numeric_value))
         
-        print(f"🔧 Final expression: {eval_expr}")
+        print(f"After placeholder → number: {temp_expr}")
         
+        # NOW convert percentages (after all variables are replaced)
+        # Only match actual percentage signs
+        temp_expr = re.sub(
+            r'(\d+(?:\.\d+)?)\s*%',
+            r'((\1)/100.0)',
+            temp_expr
+        )
+        
+        print(f"After percentage conversion: {temp_expr}")
+        
+        # Define allowed functions
         allowed_builtins = {
             'max': max, 'min': min, 'abs': abs, 'round': round,
             'int': int, 'float': float, 'pow': pow, 'sum': sum, 'len': len
         }
         
-        result = eval(eval_expr, {"__builtins__": allowed_builtins, "math": math}, {})
+        # Evaluate
+        result = eval(temp_expr, {"__builtins__": allowed_builtins, "math": math}, {})
         
-        print(f"✅ Result: {result} (type: {type(result).__name__})")
+        print(f"✅ Eval successful!")
+        print(f"   Result: {result}")
+        print(f"   Type: {type(result).__name__}")
+        print(f"{'='*60}\n")
         
+        # Return based on type
         if isinstance(result, (int, float)):
             if math.isnan(result) or math.isinf(result):
+                print(f"⚠️ Result is NaN or Inf, returning None")
                 return None
             return float(result)
         elif isinstance(result, (datetime, date, pd.Timestamp)):
             return result
         else:
+            print(f"⚠️ Unexpected result type: {type(result)}, returning None")
             return None
     
     except Exception as e:
-        print(f"❌ Error in safe_eval_v2: {e}")
-        print(f"   Expression: {expression}")
-        print(f"   After processing: {eval_expr if 'eval_expr' in locals() else 'N/A'}")
+        print(f"\n{'='*60}")
+        print(f"❌ EVALUATION ERROR")
+        print(f"{'='*60}")
+        print(f"Error: {e}")
+        print(f"Original expression: {expression}")
+        print(f"Final expression: {temp_expr if 'temp_expr' in locals() else 'N/A'}")
+        print(f"Variables: {variables}")
         import traceback
         traceback.print_exc()
+        print(f"{'='*60}\n")
         return None
 
 def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict[str, str], is_pre_mapped: bool = False) -> Any:
