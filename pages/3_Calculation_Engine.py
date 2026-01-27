@@ -629,47 +629,54 @@ def run_calculations(df: pd.DataFrame,
         print(f"Expression: {formula_expr}")
         print(f"Pre-mapped: {is_pre_mapped}")
         
-        # UPDATED: Determine output column using alias/mapping logic AND explicit output_column
+        # 1. Get Primary Output Column (for logging/display purposes)
         output_col = get_output_column_name(formula_name, formula, var_to_header_mapping, header_to_var_mapping)
         
         print(f"\n📍 OUTPUT COLUMN DETERMINATION:")
         print(f"   Formula name: {formula_name}")
-        print(f"   Determined output column: {output_col}")
+        print(f"   Primary output column: {output_col}")
+
+        # --- UPDATED LOGIC: Find linked columns from MAPPINGS ---
+        linked_output_cols = set()
         
-        # Debug output column logic
+        # A. Determine the 'Target Variable Name' we are calculating
+        # If the formula name is an alias (e.g. PV -> SURRENDER_PAID_AMOUNT), we want the target variable
+        target_variable = formula_name
+        if formula_name in FORMULA_ALIASES:
+            target_variable = FORMULA_ALIASES[formula_name]
+            print(f"   Alias detected: {formula_name} -> {target_variable}")
+        
+        # B. Scan header_to_var_mapping for ALL headers pointing to this target variable
+        # header_to_var_mapping format: {"Header Name": "Variable_Name"}
+        found_mappings = []
+        for header, var_name in header_to_var_mapping.items():
+            if var_name == target_variable:
+                linked_output_cols.add(header)
+                found_mappings.append(header)
+        
+        if found_mappings:
+            print(f"   Found {len(found_mappings)} mapped headers for '{target_variable}': {found_mappings}")
+        
+        # C. Add any explicit output_column defined in the formula (if it wasn't in mappings)
         if 'output_column' in formula and formula['output_column']:
-            print(f"   ✅ Using explicit output_column: {formula['output_column']}")
-        else:
-            # Search for mapping
-            found_mapping = None
-            for col_header, var_name in header_to_var_mapping.items():
-                if var_name == formula_name:
-                    found_mapping = col_header
-                    break
-            
-            if found_mapping:
-                print(f"   ✅ Found in mappings: '{found_mapping}' → '{formula_name}'")
-                print(f"   ℹ️ Output will be written to: '{found_mapping}'")
-            elif formula_name in FORMULA_ALIASES:
-                print(f"   ✅ Using alias: {formula_name} → {FORMULA_ALIASES[formula_name]}")
-            else:
-                print(f"   ⚠️ Not found in mappings, using formula name as column: {formula_name}")
+            linked_output_cols.add(formula['output_column'])
         
-        print(f"   Column exists in data: {output_col in result_df.columns}")
+        # D. Add the primary output_col just in case (prevents misses)
+        linked_output_cols.add(output_col)
+        
+        linked_output_cols = list(linked_output_cols)
+        print(f"   Final list of columns to update: {linked_output_cols}")
+        # ---------------------------------------------------------
+
+        # Create columns if they don't exist
+        for col in linked_output_cols:
+            if col not in result_df.columns:
+                result_df[col] = np.nan
+                print(f"   Created new column: {col}")
         
         if output_col != formula_name:
-            print(f"   ℹ️ Output column '{output_col}' differs from formula name '{formula_name}'")
+            print(f"   ℹ️ Primary output column '{output_col}' differs from formula name '{formula_name}'")
 
-        
-        # Create output column if it doesn't exist
-        col_existed = output_col in result_df.columns
-        
-        if not col_existed:
-            result_df[output_col] = np.nan
-            print(f"📝 Created new column: {output_col}")
-        else:
-            print(f"✏️ Writing to existing column: {output_col}")
-        
         errors = []
         success_count = 0
         total_rows = len(result_df)
@@ -704,7 +711,7 @@ def run_calculations(df: pd.DataFrame,
             
             first_result = calculate_row(first_row, formula_expr, header_to_var_mapping, is_pre_mapped=is_pre_mapped)
             print(f"  ✅ Test Result: {first_result}")
-            print(f"  Will write to column: {output_col}")
+            print(f"  Will write to columns: {linked_output_cols}")
             
             if first_result is None:
                 print(f"  ⚠️ WARNING: Test calculation returned None!")
@@ -721,21 +728,27 @@ def run_calculations(df: pd.DataFrame,
                 if result is None:
                     if idx < 5:
                         errors.append(f"Row {idx}: Calculation returned None")
-                    result_df.at[result_df.index[idx], output_col] = np.nan
+                    # Write NaN to all linked columns on error
+                    for col in linked_output_cols:
+                        result_df.at[result_df.index[idx], col] = np.nan
                 else:
-                    # Write to the determined output column
-                    result_df.at[result_df.index[idx], output_col] = result
+                    # Write the result to ALL linked columns
+                    for col in linked_output_cols:
+                        result_df.at[result_df.index[idx], col] = result
                     success_count += 1
             
             except Exception as e:
                 if idx < 5:
                     errors.append(f"Row {idx}: {str(e)}")
-                result_df.at[result_df.index[idx], output_col] = np.nan
+                for col in linked_output_cols:
+                    result_df.at[result_df.index[idx], col] = np.nan
         
         # Update progress bar
         progress_bar.progress((formula_idx + 1) / len(all_formulas))
         
         success_rate = (success_count / total_rows * 100) if total_rows > 0 else 0
+        
+        # Check non-null counts for the primary column
         non_null_count = result_df[output_col].notna().sum()
         
         print(f"\n✅ Result: {success_count}/{total_rows} rows ({success_rate:.1f}% success)")
@@ -752,7 +765,7 @@ def run_calculations(df: pd.DataFrame,
                 print(f"  - {err}")
         
         calculation_results.append(CalculationResult(
-            formula_name=f"{formula_name} → {output_col}",
+            formula_name=f"{formula_name} → {output_col}", 
             rows_calculated=success_count,
             errors=errors[:10],
             success_rate=success_rate
