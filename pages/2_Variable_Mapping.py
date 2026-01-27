@@ -761,6 +761,11 @@ def main():
                        set(st.session_state.excel_headers) != set(st.session_state.get('last_uploaded_headers', [])):
                         st.session_state.selected_variables_for_mapping = all_master_vars
                         st.session_state.last_uploaded_headers = st.session_state.excel_headers
+                        
+                    valid_default_selection = [
+                        v for v in st.session_state.selected_variables_for_mapping 
+                        if v in all_master_vars
+                    ]
                     
                     st.session_state.selected_variables_for_mapping = st.multiselect(
                         "Select Variables to Map",
