@@ -23,6 +23,7 @@ def load_css(file_name="style.css"):
     if os.path.exists(css_path):
         with open(css_path, 'r') as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+
 def format_indian_number(num):
     """Format number in Indian numbering system (lakhs, crores)"""
     if pd.isna(num) or num is None:
@@ -63,6 +64,7 @@ def format_indian_number(num):
         formatted = ",".join(pairs) + "," + last_three
     
     return f"{sign}{formatted}.{decimal_part}"
+
 # --- Data Classes ---
 @dataclass
 class CalculationResult:
@@ -75,13 +77,12 @@ class CalculationResult:
 BASIC_DERIVED_FORMULAS = {
     'no_of_premium_paid': {
         'description': 'Number of years of premiums paid (FUP_Date - TERM_START_DATE) / 12',
-        # FIX: Wrapped in int() to return a whole number and ignore decimals
         'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, FUP_Date) / 12)', 
         'variables': ['FUP_Date', 'TERM_START_DATE']
     },
     'policy_year': {
         'description': 'Policy year based on term start and surrender date',
-        'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, DATE_OF_SURRENDER) / 12 + 1)', # Also applied int() here for consistency
+        'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, DATE_OF_SURRENDER) / 12 + 1)',
         'variables': ['DATE_OF_SURRENDER', 'TERM_START_DATE']
     },
     'maturity_date': {
@@ -94,37 +95,49 @@ BASIC_DERIVED_FORMULAS = {
 FORMULA_ALIASES = {
     # Multiple formula names that should write to/read from the same column
     'ROP_BENEFIT': 'TOTAL_PREMIUM_PAID',
-    'ROP_Benefit': 'TOTAL_PREMIUM_PAID',  # Handle case variations
+    'ROP_Benefit': 'TOTAL_PREMIUM_PAID',
     'TOTAL_PREMIUMS_PAID': 'TOTAL_PREMIUM_PAID',
     'Income_Benefit_Amount': 'PAID_UP_INCOME_BENEFIT_AMOUNT',
-    
-    
-    # Common formula name variations
-    'PAID_UP_SA_ON_DEATH': 'PAID_UP_SA_ON_DEATH',  # Should use calculated column, not map back
+    'PAID_UP_SA_ON_DEATH': 'PAID_UP_SA_ON_DEATH',
     'Present_Value_of_paid_up_sum_assured_on_death': 'PAID_UP_SA_ON_DEATH',
     'PAID_UP_INCOME_INSTALLMENT': 'PAID_UP_INCOME_BENEFIT_AMOUNT',  
-    'PAID_UP_SA_ON_DEATH':'PAIDUP_VALUE',
     'SURRENDER_PAID_AMOUNT':'PV',
     'PV':'SURRENDER_PAID_AMOUNT'
-
 }
 
 
-def get_output_column_name(formula_name: str, var_to_header_mapping: Dict[str, str]) -> str:
+def get_output_column_name(formula_name: str, formula_info: Dict, var_to_header_mapping: Dict[str, str], header_to_var_mapping: Dict[str, str]) -> str:
     """
     Determine the actual column name to use for a formula.
-    Checks: aliases → mappings → formula name itself
+    NEW: Check formula_info for output_column field first, then check mappings
+    Then checks: aliases → mappings → formula name itself
     """
-    # Check if this formula has an alias
-    if formula_name in FORMULA_ALIASES:
-        return FORMULA_ALIASES[formula_name]
+    # PRIORITY 1: Check if formula has explicit output_column specified
+    if 'output_column' in formula_info and formula_info['output_column']:
+        output_col = formula_info['output_column']
+        return output_col
     
-    # Check if formula maps to a specific header
+    # PRIORITY 2: Check if formula_name exists as a KEY in header_to_var_mapping
+    # This means formula_name is an actual column header that maps to a variable
+    if formula_name in header_to_var_mapping:
+        # The formula_name IS the output column
+        return formula_name
+    
+    # PRIORITY 3: Check if this formula has an alias
+    if formula_name in FORMULA_ALIASES:
+        aliased = FORMULA_ALIASES[formula_name]
+        # Check if the aliased name is a column
+        if aliased in header_to_var_mapping:
+            return aliased
+        return aliased
+    
+    # PRIORITY 4: Check if formula maps to a specific header via var_to_header
     if formula_name in var_to_header_mapping:
         return var_to_header_mapping[formula_name]
     
-    # Default to formula name itself
+    # PRIORITY 5: Default to formula name itself
     return formula_name
+
 def get_derived_formulas() -> List[Dict]:
     """Convert derived formulas to standard formula format"""
     formulas = []
@@ -190,7 +203,7 @@ def add_months(date, months):
         return None
 
 def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
-    """Safely evaluate a mathematical expression - CORRECTED VERSION"""
+    """Safely evaluate a mathematical expression - CORRECTED VERSION with = handling"""
     try:
         eval_expr = expression.strip()
         
@@ -200,11 +213,14 @@ def safe_eval(expression: str, variables: Dict[str, Any]) -> Any:
         print(f"Original expression: {expression}")
         print(f"Variables passed: {variables}")
 
-        # Remove assignment if present
+        # ENHANCED: Remove assignment if present (handles any = that slipped through)
         if '=' in eval_expr and not any(op in eval_expr for op in ['==', '!=', '<=', '>=']):
             parts = eval_expr.split('=')
             if len(parts) >= 2:
-                eval_expr = parts[-1].strip()
+                # Take everything after the FIRST = sign
+                old_expr = eval_expr
+                eval_expr = '='.join(parts[1:]).strip()
+                print(f"⚙️ Stripped assignment: '{old_expr}' → '{eval_expr}'")
 
         # Process MONTHS_BETWEEN
         if 'MONTHS_BETWEEN' in eval_expr.upper():
@@ -412,9 +428,10 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
                         break
             
             if f"[{header_name}]" not in var_values:
+                print(f"❌ WARNING: Bracketed variable '[{header_name}]' not found, defaulting to 0.0")
                 var_values[f"[{header_name}]"] = 0.0
 
-    # 2. IDENTIFY Potential Variables (non-bracketed)
+    # 2. IDENTIFY Potential Variables (non-bracketed) - FIXED to exclude function names
     potential_vars = set()
     
     # Extract from MONTHS_BETWEEN
@@ -449,12 +466,13 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', temp_expr))
     potential_vars.update(other_vars)
     
-    # Remove Python keywords
+    # FIXED: Remove Python keywords and function names (case insensitive)
     python_keywords = {
         'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 
-        'CURRENT_DATE', 'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'POW'
+        'current_date', 'months_between', 'add_months', 'power', 'date', 'datetime'
     }
-    potential_vars = potential_vars - python_keywords
+    # Case-insensitive filtering
+    potential_vars = {v for v in potential_vars if v.lower() not in python_keywords}
     
     # 3. POPULATE var_values with found variables
     # PRIORITY ORDER: Direct column match (if not NaN) > Aliases > Mappings
@@ -466,24 +484,32 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         val = None
         found_source = None
         
+        print(f"\n🔍 Looking up variable: {var_name}")
+        print(f"   Available columns: {list(row.index)[:20]}")
+        
         # PRIORITY 1: Check direct column match (original data or calculated)
         if var_name in row.index:
             val = row[var_name]
             if pd.notna(val):
                 var_values[var_name] = val
                 found_source = f"Direct Column: {var_name}"
-                print(f"✓ Found {var_name} directly = {val}")
+                print(f"✅ Found {var_name} directly in row.index = {val}")
                 continue
+            else:
+                print(f"⚠️ Found {var_name} in row.index but value is NaN/None")
+        else:
+            print(f"❌ {var_name} NOT in row.index")
         
         # PRIORITY 2: Check if it's an aliased formula
         if var_name in FORMULA_ALIASES:
             aliased_col = FORMULA_ALIASES[var_name]
+            print(f"   Checking alias: {var_name} → {aliased_col}")
             if aliased_col in row.index:
                 val = row[aliased_col]
                 if pd.notna(val):
                     var_values[var_name] = val
                     found_source = f"Alias: {var_name} → {aliased_col}"
-                    print(f"✓ Found {var_name} via alias {aliased_col} = {val}")
+                    print(f"✅ Found {var_name} via alias {aliased_col} = {val}")
                     continue
         
         # PRIORITY 3: Check if var maps to a header via header_to_var_mapping
@@ -491,15 +517,17 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
         
         if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
             mapped_header = header_to_var_mapping[var_name]
+            print(f"   Checking header_to_var mapping: {var_name} → {mapped_header}")
         elif var_name in var_to_header_mapping:
             mapped_header = var_to_header_mapping[var_name]
+            print(f"   Checking var_to_header mapping: {var_name} → {mapped_header}")
         
         if mapped_header and mapped_header in row.index:
             val = row[mapped_header]
             if pd.notna(val):
                 var_values[var_name] = val
                 found_source = f"Mapping: {var_name} → {mapped_header}"
-                print(f"✓ Found {var_name} via mapping {mapped_header} = {val}")
+                print(f"✅ Found {var_name} via mapping {mapped_header} = {val}")
                 continue
         
         # PRIORITY 4: Case-insensitive search
@@ -510,13 +538,18 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
                     if pd.notna(val):
                         var_values[var_name] = val
                         found_source = f"Case-insensitive: {var_name} → {col}"
-                        print(f"✓ Found {var_name} case-insensitive as {col} = {val}")
+                        print(f"✅ Found {var_name} case-insensitive as {col} = {val}")
                         break
         
         # If still not found, default to 0.0
         if var_name not in var_values:
-            print(f"❌ WARNING: Variable '{var_name}' not found in row, defaulting to 0.0")
-            print(f"   Available columns: {list(row.index)[:10]}...")
+            print(f"❌ WARNING: Variable '{var_name}' not found anywhere, defaulting to 0.0")
+            print(f"   This is likely why you're seeing 0 values!")
+            print(f"   Checked:")
+            print(f"     - Direct column match: {var_name in row.index}")
+            print(f"     - Aliases: {var_name in FORMULA_ALIASES}")
+            print(f"     - header_to_var_mapping: {var_name in header_to_var_mapping}")
+            print(f"     - var_to_header_mapping: {var_name in var_to_header_mapping}")
             var_values[var_name] = 0.0
     
     # DEBUG: Print what variables we're passing to safe_eval
@@ -525,6 +558,7 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     
     result = safe_eval(formula_expr, var_values)
     return result
+
 def find_matching_column(formula_name: str, df_columns: List[str], header_to_var_mapping: Dict[str, str]) -> str:
     """Find the best matching column for a formula"""
     formula_lower = formula_name.lower().replace('_', '').replace(' ', '')
@@ -584,13 +618,15 @@ def run_calculations(df: pd.DataFrame,
         formula_expr = formula.get('formula_expression', '')
         is_pre_mapped = formula.get('is_pre_mapped', False)
         
-        # UPDATED: Determine output column using alias/mapping logic
-        output_col = get_output_column_name(formula_name, var_to_header_mapping)
+        # UPDATED: Determine output column using alias/mapping logic AND explicit output_column
+        output_col = get_output_column_name(formula_name, formula, var_to_header_mapping, header_to_var_mapping)
         
         # Show if we're using an alias or mapping
         if output_col != formula_name:
             if formula_name in FORMULA_ALIASES:
                 st.info(f"🔗 **{formula_name}** → aliased to column: **{output_col}**")
+            elif 'output_column' in formula and formula['output_column']:
+                st.info(f"📌 **{formula_name}** → explicit output_column: **{output_col}**")
             else:
                 st.info(f"📍 **{formula_name}** → mapped to column: **{output_col}**")
         
@@ -690,7 +726,6 @@ def run_calculations(df: pd.DataFrame,
             errors=errors[:10],
             success_rate=success_rate
         ))
-        
     
     return result_df, calculation_results
 
@@ -717,7 +752,7 @@ def import_mappings_from_json(json_file) -> Dict[str, str]:
         raise ValueError(f"Error reading JSON: {str(e)}")
 
 def import_formulas_from_json(json_file) -> List[Dict]:
-    """Import formulas from JSON file"""
+    """Import formulas from JSON file - UPDATED to auto-detect pre-mapped formulas and handle = assignments"""
     try:
         content = json_file.read()
         data = json.loads(content)
@@ -736,32 +771,61 @@ def import_formulas_from_json(json_file) -> List[Dict]:
             final_expression = ""
             original_expression = ""
             
+            # Check if mapped_expression exists
             if 'mapped_expression' in formula:
-                is_pre_mapped = True
                 final_expression = formula['mapped_expression']
                 original_expression = formula.get('original_expression', '')
+                # Auto-detect if it contains brackets
+                is_pre_mapped = '[' in final_expression and ']' in final_expression
             else:
-                is_pre_mapped = False
                 raw_expr = formula.get('formula_expression', '')
                 final_expression = raw_expr.strip('[]')
                 original_expression = raw_expr
+                # Auto-detect if original had brackets
+                is_pre_mapped = '[' in raw_expr and ']' in raw_expr
+            
+            # CRITICAL FIX: Auto-strip LHS from formulas with = sign
+            # Check if expression has assignment operator (but not ==, !=, <=, >=)
+            if '=' in final_expression and not any(op in final_expression for op in ['==', '!=', '<=', '>=']):
+                parts = final_expression.split('=')
+                if len(parts) >= 2:
+                    # Take everything after the FIRST = sign
+                    rhs = '='.join(parts[1:]).strip()
+                    lhs = parts[0].strip()
+                    
+                    st.info(f"🔧 Auto-cleaned formula: Removed LHS assignment `{lhs} =` from expression")
+                    final_expression = rhs
+            
+            # Override with explicit is_pre_mapped if provided
+            if 'is_pre_mapped' in formula:
+                is_pre_mapped = formula['is_pre_mapped']
             
             if not formula.get('formula_name'):
                 continue
             
-            validated_formulas.append({
+            # Preserve output_column field if present
+            validated_formula = {
                 'formula_name': formula['formula_name'],
                 'formula_expression': final_expression,
                 'original_expression': original_expression,
                 'is_pre_mapped': is_pre_mapped,
                 'description': formula.get('description', ''),
                 'variables_used': formula.get('variables_used', '')
-            })
+            }
+            
+            # Add output_column if specified
+            if 'output_column' in formula and formula['output_column']:
+                validated_formula['output_column'] = formula['output_column']
+            
+            validated_formulas.append(validated_formula)
+        
+        st.info(f"✅ Loaded {len(validated_formulas)} formulas ({sum(1 for f in validated_formulas if f['is_pre_mapped'])} pre-mapped)")
         
         return validated_formulas
         
     except Exception as e:
         raise ValueError(f"Error reading JSON: {str(e)}")
+
 def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict], 
                                header_to_var_mapping: Dict[str, str], 
                                num_rows: int = 3):
@@ -794,7 +858,7 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
             formula_expr = formula.get('formula_expression', '')
             is_pre_mapped = formula.get('is_pre_mapped', False)
             
-            output_col = get_output_column_name(formula_name, var_to_header_mapping)
+            output_col = get_output_column_name(formula_name, formula, var_to_header_mapping, header_to_var_mapping)
             
             with st.expander(f"{'🔧' if formula_idx < len(get_derived_formulas()) else '📐'} {formula_name} → {output_col}", expanded=True):
                 
@@ -804,7 +868,6 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
                 # Extract variables used
                 var_values = {}
                 
-
                 if is_pre_mapped:
                     # Bracketed variables
                     pattern = r'\[([^\]]+)\]'
@@ -857,10 +920,9 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
                     all_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
                     python_keywords = {
                         'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 
-                        'CURRENT_DATE', 'MAX', 'MIN', 'ABS', 'ROUND', 'SUM', 'POWER', 'SQRT', 'POW',
-                        'MONTHS_BETWEEN', 'ADD_MONTHS'
+                        'current_date', 'months_between', 'add_months', 'power', 'date', 'datetime'
                     }
-                    potential_vars = all_vars - python_keywords
+                    potential_vars = {v for v in all_vars if v.lower() not in python_keywords}
                     
                     for var_name in sorted(potential_vars):
                         if f"[{var_name}]" in var_values:
@@ -942,8 +1004,11 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
                     other_vars = set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', clean_expr))
                     potential_vars.update(other_vars)
                     
-                    python_keywords = {'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 'CURRENT_DATE'}
-                    potential_vars = potential_vars - python_keywords
+                    python_keywords = {
+                        'max', 'min', 'abs', 'round', 'sum', 'pow', 'math', 'sqrt', 'len', 'int', 'float', 
+                        'current_date', 'months_between', 'add_months', 'power', 'date', 'datetime'
+                    }
+                    potential_vars = {v for v in potential_vars if v.lower() not in python_keywords}
                     
                     st.markdown("**Variable Lookup:**")
                     lookup_table = []
@@ -1034,6 +1099,7 @@ def show_detailed_calculations(result_df: pd.DataFrame, formulas: List[Dict],
         
         st.markdown("---")
         st.markdown("---")
+
 # --- Main App ---
 def main():
     st.set_page_config(page_title="Calculation Engine", page_icon="🧮", layout="wide")
@@ -1055,6 +1121,63 @@ def main():
     has_formulas = 'formulas' in st.session_state and st.session_state.formulas
     has_data = 'excel_df' in st.session_state and st.session_state.excel_df is not None
     
+    # CRITICAL FIX: Normalize mappings to ensure correct format
+    if has_mappings and 'mappings_normalized' not in st.session_state:
+        st.info("🔄 Normalizing mappings from previous page...")
+        normalized_mappings = {}
+        
+        for k, v in st.session_state.header_to_var_mapping.items():
+            # Ensure both key and value are strings
+            header = str(k).strip()
+            var_name = str(v).strip()
+            
+            # Skip empty or 'nan' values
+            if header and var_name and header != 'nan' and var_name != 'nan':
+                normalized_mappings[header] = var_name
+        
+        st.session_state.header_to_var_mapping = normalized_mappings
+        st.session_state.mappings_normalized = True
+        st.success(f"✅ Normalized {len(normalized_mappings)} mappings")
+    
+    # CRITICAL FIX: Reprocess formulas from previous pages to ensure is_pre_mapped is set correctly
+    if has_formulas and 'formulas_reprocessed' not in st.session_state:
+        st.info("🔄 Reprocessing formulas from previous page to ensure correct mapping...")
+        reprocessed_formulas = []
+        for formula in st.session_state.formulas:
+            # Check if formula has mapped_expression or brackets
+            formula_expr = formula.get('formula_expression', '')
+            
+            # Auto-detect if it should be pre-mapped
+            is_pre_mapped = '[' in formula_expr and ']' in formula_expr
+            
+            # Strip = sign if present
+            if '=' in formula_expr and not any(op in formula_expr for op in ['==', '!=', '<=', '>=']):
+                parts = formula_expr.split('=')
+                if len(parts) >= 2:
+                    old_expr = formula_expr
+                    formula_expr = '='.join(parts[1:]).strip()
+                    st.info(f"🔧 Auto-cleaned formula {formula.get('formula_name')}: Removed assignment")
+            
+            reprocessed_formula = {
+                'formula_name': formula.get('formula_name'),
+                'formula_expression': formula_expr,
+                'original_expression': formula.get('original_expression', formula_expr),
+                'is_pre_mapped': is_pre_mapped,
+                'description': formula.get('description', ''),
+                'variables_used': formula.get('variables_used', '')
+            }
+            
+            # Preserve output_column if present
+            if 'output_column' in formula:
+                reprocessed_formula['output_column'] = formula['output_column']
+            
+            reprocessed_formulas.append(reprocessed_formula)
+        
+        st.session_state.formulas = reprocessed_formulas
+        st.session_state.formulas_reprocessed = True
+        st.success(f"✅ Reprocessed {len(reprocessed_formulas)} formulas ({sum(1 for f in reprocessed_formulas if f['is_pre_mapped'])} detected as pre-mapped)")
+        st.rerun()
+    
     if not has_mappings or not has_formulas:
         st.warning("⚠️ Missing configuration files")
         
@@ -1064,15 +1187,32 @@ def main():
             st.markdown("### 📋 Variable Mappings")
             if has_mappings:
                 st.success(f"✅ {len(st.session_state.header_to_var_mapping)} loaded")
+                
+                # DEBUG: Show mapping structure
+                with st.expander("🔍 Debug: Mapping Structure"):
+                    st.write("**First 5 mappings:**")
+                    sample_mappings = dict(list(st.session_state.header_to_var_mapping.items())[:5])
+                    for k, v in sample_mappings.items():
+                        st.write(f"  `{k}` → `{v}` (Key type: {type(k).__name__}, Value type: {type(v).__name__})")
+                
+                # Add download button for existing mappings
+                mappings_json = json.dumps(st.session_state.header_to_var_mapping, indent=2)
+                st.download_button(
+                    label="📥 Download Current Mappings",
+                    data=mappings_json,
+                    file_name="variable_mappings.json",
+                    mime="application/json"
+                )
             
             uploaded_mapping = st.file_uploader("Upload Mappings (JSON)", type=['json'], key="map_up")
             if uploaded_mapping and not has_mappings:
                 try:
                     imported_mappings = import_mappings_from_json(uploaded_mapping)
                     st.success(f"✅ {len(imported_mappings)} mappings")
-                    if st.button("Apply Mappings", type="primary"):
-                        st.session_state.header_to_var_mapping = imported_mappings
-                        st.rerun()
+                    # AUTO-APPLY: Removed button requirement
+                    st.session_state.header_to_var_mapping = imported_mappings
+                    st.info("📝 Mappings auto-applied!")
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
         
@@ -1080,15 +1220,25 @@ def main():
             st.markdown("### 🧮 Formulas")
             if has_formulas:
                 st.success(f"✅ {len(st.session_state.formulas)} loaded")
+                
+                # DEBUG: Show formula structure
+                with st.expander("🔍 Debug: Formula Structure"):
+                    st.write("**First 3 formulas:**")
+                    for i, f in enumerate(st.session_state.formulas[:3]):
+                        st.write(f"**Formula {i+1}: {f.get('formula_name')}**")
+                        st.write(f"  - Expression: `{f.get('formula_expression', 'N/A')[:80]}`")
+                        st.write(f"  - Pre-mapped: {f.get('is_pre_mapped', False)}")
+                        st.write(f"  - Has brackets: {'[' in f.get('formula_expression', '')}")
             
             uploaded_formulas = st.file_uploader("Upload Formulas (JSON)", type=['json'], key="form_up")
             if uploaded_formulas and not has_formulas:
                 try:
                     imported_formulas = import_formulas_from_json(uploaded_formulas)
                     st.success(f"✅ {len(imported_formulas)} formulas")
-                    if st.button("Apply Formulas", type="primary"):
-                        st.session_state.formulas = imported_formulas
-                        st.rerun()
+                    # AUTO-APPLY: Removed button requirement
+                    st.session_state.formulas = imported_formulas
+                    st.info("📝 Formulas auto-applied!")
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
         
@@ -1098,6 +1248,16 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             st.success(f"✅ **Mappings:** {len(st.session_state.header_to_var_mapping)}")
+            
+            # NEW: Add download button for existing mappings
+            mappings_json = json.dumps(st.session_state.header_to_var_mapping, indent=2)
+            st.download_button(
+                label="📥 Download Current Mappings",
+                data=mappings_json,
+                file_name="variable_mappings.json",
+                mime="application/json",
+                key="download_mappings"
+            )
         with col2:
             st.success(f"✅ **Formulas:** {len(st.session_state.formulas)}")
         
@@ -1116,9 +1276,10 @@ def main():
                     df = pd.read_excel(uploaded_data)
                 
                 st.success(f"✅ {len(df)} rows, {len(df.columns)} columns")
-                if st.button("Use This Data", type="primary"):
-                    st.session_state.excel_df = df
-                    st.rerun()
+                # AUTO-APPLY: Removed button requirement
+                st.session_state.excel_df = df
+                st.info("📝 Data auto-applied!")
+                st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
         return
@@ -1191,43 +1352,18 @@ def main():
                         st.caption(f"  {err}")
         
         st.dataframe(st.session_state.results_df, use_container_width=True, height=400)
-        if 'results_df' in st.session_state and st.session_state.results_df is not None:
-            st.markdown("---")
-            st.subheader("✅ Results")
-            
-            total_rows = len(st.session_state.results_df)
-            total_formulas = len(st.session_state.calc_results)
-            avg_success = sum(r.success_rate for r in st.session_state.calc_results) / total_formulas if total_formulas > 0 else 0
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Rows", total_rows)
-            with col2:
-                st.metric("Formulas Applied", total_formulas)
-            with col3:
-                st.metric("Avg Success", f"{avg_success:.1f}%")
-            
-            st.markdown("---")
-            
-            # NEW: Add detailed calculation view
-            if st.checkbox("🔍 Show Detailed Calculations (First 3 Rows)", value=False):
-                show_detailed_calculations(
-                    st.session_state.results_df, 
-                    st.session_state.formulas,
-                    st.session_state.header_to_var_mapping,
-                    num_rows=3
-                )
-            
-            
-            with st.expander("📊 Formula Details", expanded=False):
-                for calc_result in st.session_state.calc_results:
-                    icon = "✅" if calc_result.success_rate >= 90 else "⚠️" if calc_result.success_rate >= 50 else "❌"
-                    st.write(f"{icon} **{calc_result.formula_name}**: {calc_result.success_rate:.1f}%")
-                    if calc_result.errors:
-                        for err in calc_result.errors[:3]:
-                            st.caption(f"  {err}")
-            
-            # ... rest of the results display code
+        
+        st.markdown("---")
+        
+        # NEW: Add detailed calculation view
+        if st.checkbox("🔍 Show Detailed Calculations (First 3 Rows)", value=False):
+            show_detailed_calculations(
+                st.session_state.results_df, 
+                st.session_state.formulas,
+                st.session_state.header_to_var_mapping,
+                num_rows=3
+            )
+        
         from io import BytesIO
         col1, col2 = st.columns(2)
         
