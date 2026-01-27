@@ -109,33 +109,40 @@ FORMULA_ALIASES = {
 def get_output_column_name(formula_name: str, formula_info: Dict, var_to_header_mapping: Dict[str, str], header_to_var_mapping: Dict[str, str]) -> str:
     """
     Determine the actual column name to use for a formula.
-    NEW: Check formula_info for output_column field first, then check mappings
-    Then checks: aliases → mappings → formula name itself
+    
+    Logic:
+    1. Check if formula has explicit output_column
+    2. Search mappings for: column_header: variable_name where variable_name == formula_name
+    3. Check aliases
+    4. Default to formula_name
+    
+    Mappings structure: {"Column Header": "Variable_Name"}
+    So if we have {"SURRENDER PAID AMOUNT": "SURRENDER_PAID_AMOUNT"},
+    and formula_name is "SURRENDER_PAID_AMOUNT",
+    we should return "SURRENDER PAID AMOUNT"
     """
     # PRIORITY 1: Check if formula has explicit output_column specified
     if 'output_column' in formula_info and formula_info['output_column']:
-        output_col = formula_info['output_column']
-        return output_col
+        return formula_info['output_column']
     
-    # PRIORITY 2: Check if formula_name exists as a KEY in header_to_var_mapping
-    # This means formula_name is an actual column header that maps to a variable
-    if formula_name in header_to_var_mapping:
-        # The formula_name IS the output column
-        return formula_name
+    # PRIORITY 2: Search header_to_var_mapping for column where value matches formula_name
+    # header_to_var_mapping format: {"Column Header": "Variable_Name"}
+    # We want to find the key (column header) where value == formula_name
+    for column_header, variable_name in header_to_var_mapping.items():
+        if variable_name == formula_name:
+            # Found it! The output column is the key (column_header)
+            return column_header
     
     # PRIORITY 3: Check if this formula has an alias
     if formula_name in FORMULA_ALIASES:
         aliased = FORMULA_ALIASES[formula_name]
-        # Check if the aliased name is a column
-        if aliased in header_to_var_mapping:
-            return aliased
+        # Check if the aliased name maps to a column
+        for column_header, variable_name in header_to_var_mapping.items():
+            if variable_name == aliased:
+                return column_header
         return aliased
     
-    # PRIORITY 4: Check if formula maps to a specific header via var_to_header
-    if formula_name in var_to_header_mapping:
-        return var_to_header_mapping[formula_name]
-    
-    # PRIORITY 5: Default to formula name itself
+    # PRIORITY 4: Default to formula name itself
     return formula_name
 
 def get_derived_formulas() -> List[Dict]:
@@ -630,16 +637,34 @@ def run_calculations(df: pd.DataFrame,
         # UPDATED: Determine output column using alias/mapping logic AND explicit output_column
         output_col = get_output_column_name(formula_name, formula, var_to_header_mapping, header_to_var_mapping)
         
-        print(f"Output column: {output_col}")
+        print(f"\n📍 OUTPUT COLUMN DETERMINATION:")
+        print(f"   Formula name: {formula_name}")
+        print(f"   Determined output column: {output_col}")
         
-        # Show if we're using an alias or mapping
-        if output_col != formula_name:
-            if formula_name in FORMULA_ALIASES:
-                print(f"🔗 Using alias: {formula_name} → {output_col}")
-            elif 'output_column' in formula and formula['output_column']:
-                print(f"📌 Using explicit output_column: {output_col}")
+        # Debug output column logic
+        if 'output_column' in formula and formula['output_column']:
+            print(f"   ✅ Using explicit output_column: {formula['output_column']}")
+        else:
+            # Search for mapping
+            found_mapping = None
+            for col_header, var_name in header_to_var_mapping.items():
+                if var_name == formula_name:
+                    found_mapping = col_header
+                    break
+            
+            if found_mapping:
+                print(f"   ✅ Found in mappings: '{found_mapping}' → '{formula_name}'")
+                print(f"   ℹ️ Output will be written to: '{found_mapping}'")
+            elif formula_name in FORMULA_ALIASES:
+                print(f"   ✅ Using alias: {formula_name} → {FORMULA_ALIASES[formula_name]}")
             else:
-                print(f"📍 Using mapping: {formula_name} → {output_col}")
+                print(f"   ⚠️ Not found in mappings, using formula name as column: {formula_name}")
+        
+        print(f"   Column exists in data: {output_col in result_df.columns}")
+        
+        if output_col != formula_name:
+            print(f"   ℹ️ Output column '{output_col}' differs from formula name '{formula_name}'")
+
         
         # Create output column if it doesn't exist
         col_existed = output_col in result_df.columns
@@ -1115,9 +1140,8 @@ def main():
     
     
     has_mappings = 'header_to_var_mapping' in st.session_state and st.session_state.header_to_var_mapping
-    # CRITICAL FIX: Check for mapped_formulas first, then formulas as fallback
-    has_formulas = ('mapped_formulas' in st.session_state and st.session_state.mapped_formulas) or \
-                   ('formulas' in st.session_state and st.session_state.formulas)
+    # Only check for mapped_formulas from previous page
+    has_formulas = 'mapped_formulas' in st.session_state and st.session_state.mapped_formulas
     has_data = 'excel_df' in st.session_state and st.session_state.excel_df is not None
     
     # CRITICAL FIX: Normalize mappings to ensure correct format
@@ -1148,106 +1172,56 @@ def main():
         st.session_state.header_to_var_mapping = normalized_mappings
         st.session_state.mappings_normalized = True
     
-    # CRITICAL FIX: Use mapped_formulas if available, otherwise process regular formulas
+    # Process mapped_formulas from previous page
     if has_formulas and 'formulas_reprocessed' not in st.session_state:
-        # Check which formula source we have
-        if 'mapped_formulas' in st.session_state and st.session_state.mapped_formulas:
-            print("\n" + "="*80)
-            print("🔄 PROCESSING MAPPED_FORMULAS FROM PREVIOUS PAGE")
-            print("="*80)
-            
-            simplified_formulas = []
-            for idx, formula in enumerate(st.session_state.mapped_formulas):
-                print(f"\nFormula {idx+1}: {formula.get('formula_name')}")
-                
-                # mapped_formulas has the structure with mapped_expression
-                if 'mapped_expression' in formula:
-                    formula_expr = formula['mapped_expression']
-                    print(f"  Mapped expression: {formula_expr}")
-                else:
-                    formula_expr = formula.get('formula_expression', '')
-                    print(f"  Formula expression: {formula_expr}")
-                
-                # mapped_formulas ALWAYS has brackets, so is_pre_mapped = True
-                is_pre_mapped = True
-                print(f"  Pre-mapped: {is_pre_mapped}")
-                
-                # Strip = sign if present
-                if '=' in formula_expr and not any(op in formula_expr for op in ['==', '!=', '<=', '>=']):
-                    parts = formula_expr.split('=')
-                    if len(parts) >= 2:
-                        old_expr = formula_expr
-                        formula_expr = '='.join(parts[1:]).strip()
-                        print(f"  ⚙️ Stripped assignment: '{old_expr}' → '{formula_expr}'")
-                
-                # Simplified structure - only essential fields
-                simplified_formula = {
-                    'formula_name': formula.get('formula_name'),
-                    'formula_expression': formula_expr,
-                    'is_pre_mapped': is_pre_mapped
-                }
-                
-                # Preserve output_column if present
-                if 'output_column' in formula:
-                    simplified_formula['output_column'] = formula['output_column']
-                    print(f"  Output column: {formula['output_column']}")
-                
-                simplified_formulas.append(simplified_formula)
-            
-            print(f"\n✅ Processed {len(simplified_formulas)} mapped formulas")
-            print(f"   All are pre-mapped: {all(f['is_pre_mapped'] for f in simplified_formulas)}")
-            print("="*80 + "\n")
-            
-            # Store in session_state.formulas for use by calculation engine
-            st.session_state.formulas = simplified_formulas
-            
-        elif 'formulas' in st.session_state and st.session_state.formulas:
-            print("\n" + "="*80)
-            print("🔄 PROCESSING UPLOADED FORMULAS")
-            print("="*80)
-            
-            simplified_formulas = []
-            for idx, formula in enumerate(st.session_state.formulas):
-                print(f"\nFormula {idx+1}: {formula.get('formula_name')}")
-                
-                # Check for mapped_expression first
-                if 'mapped_expression' in formula and formula['mapped_expression']:
-                    formula_expr = formula['mapped_expression']
-                    is_pre_mapped = True
-                    print(f"  Using mapped_expression: {formula_expr}")
-                else:
-                    formula_expr = formula.get('formula_expression', '')
-                    is_pre_mapped = '[' in formula_expr and ']' in formula_expr
-                    print(f"  Using formula_expression: {formula_expr}")
-                
-                print(f"  Pre-mapped: {is_pre_mapped}")
-                
-                # Strip = sign if present
-                if '=' in formula_expr and not any(op in formula_expr for op in ['==', '!=', '<=', '>=']):
-                    parts = formula_expr.split('=')
-                    if len(parts) >= 2:
-                        old_expr = formula_expr
-                        formula_expr = '='.join(parts[1:]).strip()
-                        print(f"  ⚙️ Stripped assignment")
-                
-                # Simplified structure
-                simplified_formula = {
-                    'formula_name': formula.get('formula_name'),
-                    'formula_expression': formula_expr,
-                    'is_pre_mapped': is_pre_mapped
-                }
-                
-                if 'output_column' in formula:
-                    simplified_formula['output_column'] = formula['output_column']
-                
-                simplified_formulas.append(simplified_formula)
-            
-            print(f"\n✅ Processed {len(simplified_formulas)} formulas")
-            print(f"   Pre-mapped count: {sum(1 for f in simplified_formulas if f['is_pre_mapped'])}")
-            print("="*80 + "\n")
-            
-            st.session_state.formulas = simplified_formulas
+        print("\n" + "="*80)
+        print("🔄 PROCESSING MAPPED_FORMULAS FROM PREVIOUS PAGE")
+        print("="*80)
         
+        simplified_formulas = []
+        for idx, formula in enumerate(st.session_state.mapped_formulas):
+            print(f"\nFormula {idx+1}: {formula.get('formula_name')}")
+            
+            # mapped_formulas has the structure with mapped_expression
+            if 'mapped_expression' in formula:
+                formula_expr = formula['mapped_expression']
+                print(f"  Mapped expression: {formula_expr}")
+            else:
+                formula_expr = formula.get('formula_expression', '')
+                print(f"  Formula expression: {formula_expr}")
+            
+            # mapped_formulas ALWAYS has brackets, so is_pre_mapped = True
+            is_pre_mapped = True
+            print(f"  Pre-mapped: {is_pre_mapped}")
+            
+            # Strip = sign if present
+            if '=' in formula_expr and not any(op in formula_expr for op in ['==', '!=', '<=', '>=']):
+                parts = formula_expr.split('=')
+                if len(parts) >= 2:
+                    old_expr = formula_expr
+                    formula_expr = '='.join(parts[1:]).strip()
+                    print(f"  ⚙️ Stripped assignment: '{old_expr}' → '{formula_expr}'")
+            
+            # Simplified structure - only essential fields
+            simplified_formula = {
+                'formula_name': formula.get('formula_name'),
+                'formula_expression': formula_expr,
+                'is_pre_mapped': is_pre_mapped
+            }
+            
+            # Preserve output_column if present
+            if 'output_column' in formula:
+                simplified_formula['output_column'] = formula['output_column']
+                print(f"  Output column: {formula['output_column']}")
+            
+            simplified_formulas.append(simplified_formula)
+        
+        print(f"\n✅ Processed {len(simplified_formulas)} mapped formulas")
+        print(f"   All are pre-mapped: {all(f['is_pre_mapped'] for f in simplified_formulas)}")
+        print("="*80 + "\n")
+        
+        # Store for use by calculation engine
+        st.session_state.formulas = simplified_formulas
         st.session_state.formulas_reprocessed = True
     
     if not has_mappings or not has_formulas:
@@ -1290,33 +1264,23 @@ def main():
                     st.error(f"Error: {e}")
         
         with col2:
-            st.markdown("### 🧮 Formulas")
+            st.markdown("### 🧮 Mapped Formulas")
             if has_formulas:
-                # Determine which formula source we're using
-                if 'mapped_formulas' in st.session_state and st.session_state.mapped_formulas:
-                    formula_count = len(st.session_state.mapped_formulas)
-                    formula_source = "mapped_formulas"
-                else:
-                    formula_count = len(st.session_state.formulas)
-                    formula_source = "formulas"
+                # Get formula count from mapped_formulas
+                formula_count = len(st.session_state.mapped_formulas)
                 
                 # Single line with count and icons
                 col_info, col_download, col_clear = st.columns([3, 1, 1])
                 with col_info:
                     st.success(f"✅ {formula_count} loaded")
                 with col_download:
-                    # Download the source we're using
-                    if formula_source == "mapped_formulas":
-                        formulas_json = json.dumps(st.session_state.mapped_formulas, indent=2)
-                    else:
-                        formulas_json = json.dumps(st.session_state.formulas, indent=2)
-                    
+                    formulas_json = json.dumps(st.session_state.mapped_formulas, indent=2)
                     st.download_button(
                         label="📥",
                         data=formulas_json,
-                        file_name="formulas.json",
+                        file_name="mapped_formulas.json",
                         mime="application/json",
-                        help="Download formulas",
+                        help="Download mapped formulas",
                         use_container_width=True
                     )
                 with col_clear:
@@ -1329,12 +1293,13 @@ def main():
                             del st.session_state.formulas_reprocessed
                         st.rerun()
             
-            uploaded_formulas = st.file_uploader("Upload Formulas (JSON)", type=['json'], key="form_up", label_visibility="collapsed")
+            uploaded_formulas = st.file_uploader("Upload Mapped Formulas (JSON)", type=['json'], key="form_up", label_visibility="collapsed")
             if uploaded_formulas and not has_formulas:
                 try:
                     imported_formulas = import_formulas_from_json(uploaded_formulas)
-                    st.session_state.formulas = imported_formulas
-                    st.success(f"✅ {len(imported_formulas)} formulas loaded")
+                    # Store as mapped_formulas
+                    st.session_state.mapped_formulas = imported_formulas
+                    st.success(f"✅ {len(imported_formulas)} mapped formulas loaded")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -1367,30 +1332,23 @@ def main():
                     st.rerun()
             
         with col2:
-            # Determine which formula source we're using
-            if 'mapped_formulas' in st.session_state and st.session_state.mapped_formulas:
-                formula_count = len(st.session_state.mapped_formulas)
-                formulas_to_download = st.session_state.mapped_formulas
-            elif 'formulas' in st.session_state and st.session_state.formulas:
-                formula_count = len(st.session_state.formulas)
-                formulas_to_download = st.session_state.formulas
-            else:
-                formula_count = 0
-                formulas_to_download = []
+            # Use mapped_formulas
+            formula_count = len(st.session_state.mapped_formulas) if 'mapped_formulas' in st.session_state else 0
+            formulas_to_download = st.session_state.mapped_formulas if 'mapped_formulas' in st.session_state else []
             
             # Single line with count and icons
             col_info, col_download, col_clear = st.columns([3, 1, 1])
             with col_info:
-                st.success(f"✅ **Formulas:** {formula_count}")
+                st.success(f"✅ **Mapped Formulas:** {formula_count}")
             with col_download:
                 formulas_json = json.dumps(formulas_to_download, indent=2)
                 st.download_button(
                     label="📥",
                     data=formulas_json,
-                    file_name="formulas.json",
+                    file_name="mapped_formulas.json",
                     mime="application/json",
                     key="download_formulas",
-                    help="Download formulas",
+                    help="Download mapped formulas",
                     use_container_width=True
                 )
             with col_clear:
