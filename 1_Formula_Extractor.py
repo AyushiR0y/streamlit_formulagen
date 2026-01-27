@@ -582,6 +582,7 @@ class StableChunkedDocumentFormulaExtractor:
     - If SSV was already extracted as a formula: use "SSV", not its components. 
     - If SSV1_AMT, SSV2_AMT, SSV3_AMT were extracted: use these in SSV formula instead of SSV1, SSV2, SSV3 names
     - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED
+    - Distinguish between PAID_UP_INCOME_INSTALLMENT and Income_Benefit_Amount
 
     RESPONSE FORMAT:
     FORMULA_EXPRESSION: [mathematical expression using available variables]
