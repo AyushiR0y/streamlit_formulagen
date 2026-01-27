@@ -607,80 +607,90 @@ def run_calculations(df: pd.DataFrame,
         for f in derived: 
             f['is_pre_mapped'] = False
         all_formulas.extend(derived)
-        st.info(f"📊 Added {len(derived)} derived formulas (will run FIRST)")
+        print(f"\n📊 Added {len(derived)} derived formulas (will run FIRST)")
     
     all_formulas.extend(formulas.copy())
     
-    st.info(f"🔧 Processing {len(all_formulas)} total formulas in order")
+    print(f"\n🔧 Processing {len(all_formulas)} total formulas in order\n")
     
-    for formula in all_formulas:
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for formula_idx, formula in enumerate(all_formulas):
         formula_name = formula.get('formula_name', 'Unknown')
         formula_expr = formula.get('formula_expression', '')
         is_pre_mapped = formula.get('is_pre_mapped', False)
         
+        print(f"\n{'='*80}")
+        print(f"FORMULA {formula_idx+1}/{len(all_formulas)}: {formula_name}")
+        print(f"{'='*80}")
+        print(f"Expression: {formula_expr}")
+        print(f"Pre-mapped: {is_pre_mapped}")
+        
         # UPDATED: Determine output column using alias/mapping logic AND explicit output_column
         output_col = get_output_column_name(formula_name, formula, var_to_header_mapping, header_to_var_mapping)
+        
+        print(f"Output column: {output_col}")
         
         # Show if we're using an alias or mapping
         if output_col != formula_name:
             if formula_name in FORMULA_ALIASES:
-                st.info(f"🔗 **{formula_name}** → aliased to column: **{output_col}**")
+                print(f"🔗 Using alias: {formula_name} → {output_col}")
             elif 'output_column' in formula and formula['output_column']:
-                st.info(f"📌 **{formula_name}** → explicit output_column: **{output_col}**")
+                print(f"📌 Using explicit output_column: {output_col}")
             else:
-                st.info(f"📍 **{formula_name}** → mapped to column: **{output_col}**")
+                print(f"📍 Using mapping: {formula_name} → {output_col}")
         
         # Create output column if it doesn't exist
         col_existed = output_col in result_df.columns
         
         if not col_existed:
             result_df[output_col] = np.nan
-            st.info(f"📝 Creating new column: **{output_col}**")
+            print(f"📝 Created new column: {output_col}")
         else:
-            st.info(f"✏️ **{formula_name}** → Writing to existing: **{output_col}**")
-        
-        st.code(f"Expression: {formula_expr}", language="python")
+            print(f"✏️ Writing to existing column: {output_col}")
         
         errors = []
         success_count = 0
         total_rows = len(result_df)
         
-        # Debug first row
+        # Debug first row in console
         if total_rows > 0:
             first_row = result_df.iloc[0]
             
-            with st.expander(f"🔍 Debug: {formula_name}"):
-                if is_pre_mapped:
-                    st.write("**Mode:** Pre-Mapped (Direct Header Lookup)")
-                    pattern = r'\[([^\]]+)\]'
-                    headers_in_formula = re.findall(pattern, formula_expr)
-                    st.write(f"**Headers in brackets:** {headers_in_formula}")
-                    
-                    for h in headers_in_formula:
-                        # Check via mapping
-                        val = None
-                        if h in var_to_header_mapping:
-                            actual_col = var_to_header_mapping[h]
-                            val = first_row.get(actual_col, "Not found")
-                            st.write(f"  - `[{h}]` → `{actual_col}` = {val}")
-                        elif h in first_row.index:
-                            val = first_row[h]
-                            st.write(f"  - `[{h}]` (direct) = {val}")
-                        else:
-                            st.write(f"  - `[{h}]` = Not Found")
-                else:
-                    st.write("**Mode:** Variable Mapping / Hybrid")
-                    st.write(f"**Variables used:** {formula.get('variables_used', 'Unknown')}")
+            print(f"\n🔍 Testing first row:")
+            print(f"  Available columns: {list(first_row.index)[:20]}")
+            
+            if is_pre_mapped:
+                print("  Mode: Pre-Mapped (Direct Header Lookup)")
+                pattern = r'\[([^\]]+)\]'
+                headers_in_formula = re.findall(pattern, formula_expr)
+                print(f"  Headers in brackets: {headers_in_formula}")
                 
-                first_result = calculate_row(first_row, formula_expr, header_to_var_mapping, is_pre_mapped=is_pre_mapped)
-                st.write(f"**Test Result:** {first_result}")
-                st.write(f"**Will write to column:** {output_col}")
-                
-                if first_result is None:
-                    st.error("⚠️ Test calculation returned None - check formula, headers, and variables")
+                for h in headers_in_formula:
+                    val = None
+                    if h in var_to_header_mapping:
+                        actual_col = var_to_header_mapping[h]
+                        val = first_row.get(actual_col, "Not found")
+                        print(f"    [{h}] → {actual_col} = {val}")
+                    elif h in first_row.index:
+                        val = first_row[h]
+                        print(f"    [{h}] (direct) = {val}")
+                    else:
+                        print(f"    [{h}] = ❌ NOT FOUND")
+            else:
+                print("  Mode: Variable Mapping / Hybrid")
+                print(f"  Variables used: {formula.get('variables_used', 'Unknown')}")
+            
+            first_result = calculate_row(first_row, formula_expr, header_to_var_mapping, is_pre_mapped=is_pre_mapped)
+            print(f"  ✅ Test Result: {first_result}")
+            print(f"  Will write to column: {output_col}")
+            
+            if first_result is None:
+                print(f"  ⚠️ WARNING: Test calculation returned None!")
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        # Update UI progress
+        status_text.text(f"Processing {formula_idx+1}/{len(all_formulas)}: {formula_name}")
         
         # ROW-BY-ROW CALCULATION
         for idx in range(len(result_df)):
@@ -701,24 +711,25 @@ def run_calculations(df: pd.DataFrame,
                 if idx < 5:
                     errors.append(f"Row {idx}: {str(e)}")
                 result_df.at[result_df.index[idx], output_col] = np.nan
-            
-            if idx % 10 == 0 or idx == total_rows - 1:
-                progress = (idx + 1) / total_rows
-                progress_bar.progress(progress)
-                status_text.text(f"Processing {formula_name}: {idx+1}/{total_rows}")
         
-        progress_bar.empty()
-        status_text.empty()
+        # Update progress bar
+        progress_bar.progress((formula_idx + 1) / len(all_formulas))
         
         success_rate = (success_count / total_rows * 100) if total_rows > 0 else 0
         non_null_count = result_df[output_col].notna().sum()
         
-        status_icon = "✅" if success_rate >= 90 else "⚠️" if success_rate >= 50 else "❌"
-        st.success(f"{status_icon} **{formula_name}**: {success_count}/{total_rows} rows ({success_rate:.1f}% success)")
+        print(f"\n✅ Result: {success_count}/{total_rows} rows ({success_rate:.1f}% success)")
         
         if non_null_count > 0:
             sample_vals = result_df[output_col].dropna().head(3).tolist()
-            st.write(f"Sample values in **{output_col}**: {sample_vals}")
+            print(f"Sample values in {output_col}: {sample_vals}")
+        else:
+            print(f"⚠️ WARNING: No values calculated for {output_col}")
+        
+        if errors:
+            print(f"⚠️ Errors in first rows:")
+            for err in errors[:5]:
+                print(f"  - {err}")
         
         calculation_results.append(CalculationResult(
             formula_name=f"{formula_name} → {output_col}",
@@ -726,6 +737,13 @@ def run_calculations(df: pd.DataFrame,
             errors=errors[:10],
             success_rate=success_rate
         ))
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    print(f"\n{'='*80}")
+    print(f"CALCULATION COMPLETE")
+    print(f"{'='*80}\n")
     
     return result_df, calculation_results
 
@@ -1123,7 +1141,10 @@ def main():
     
     # CRITICAL FIX: Normalize mappings to ensure correct format
     if has_mappings and 'mappings_normalized' not in st.session_state:
-        st.info("🔄 Normalizing mappings from previous page...")
+        print("\n" + "="*80)
+        print("🔄 NORMALIZING MAPPINGS FROM PREVIOUS PAGE")
+        print("="*80)
+        
         normalized_mappings = {}
         
         for k, v in st.session_state.header_to_var_mapping.items():
@@ -1131,24 +1152,38 @@ def main():
             header = str(k).strip()
             var_name = str(v).strip()
             
+            print(f"  Mapping: '{k}' ({type(k).__name__}) → '{v}' ({type(v).__name__})")
+            
             # Skip empty or 'nan' values
             if header and var_name and header != 'nan' and var_name != 'nan':
                 normalized_mappings[header] = var_name
+                print(f"    ✓ Normalized to: '{header}' → '{var_name}'")
+            else:
+                print(f"    ✗ SKIPPED (empty or nan)")
+        
+        print(f"\n✅ Total normalized mappings: {len(normalized_mappings)}")
+        print("="*80 + "\n")
         
         st.session_state.header_to_var_mapping = normalized_mappings
         st.session_state.mappings_normalized = True
-        st.success(f"✅ Normalized {len(normalized_mappings)} mappings")
     
     # CRITICAL FIX: Reprocess formulas from previous pages to ensure is_pre_mapped is set correctly
     if has_formulas and 'formulas_reprocessed' not in st.session_state:
-        st.info("🔄 Reprocessing formulas from previous page to ensure correct mapping...")
+        print("\n" + "="*80)
+        print("🔄 REPROCESSING FORMULAS FROM PREVIOUS PAGE")
+        print("="*80)
+        
         reprocessed_formulas = []
-        for formula in st.session_state.formulas:
+        for idx, formula in enumerate(st.session_state.formulas):
+            print(f"\nFormula {idx+1}: {formula.get('formula_name')}")
+            
             # Check if formula has mapped_expression or brackets
             formula_expr = formula.get('formula_expression', '')
+            print(f"  Original expression: {formula_expr}")
             
             # Auto-detect if it should be pre-mapped
             is_pre_mapped = '[' in formula_expr and ']' in formula_expr
+            print(f"  Has brackets: {is_pre_mapped}")
             
             # Strip = sign if present
             if '=' in formula_expr and not any(op in formula_expr for op in ['==', '!=', '<=', '>=']):
@@ -1156,7 +1191,7 @@ def main():
                 if len(parts) >= 2:
                     old_expr = formula_expr
                     formula_expr = '='.join(parts[1:]).strip()
-                    st.info(f"🔧 Auto-cleaned formula {formula.get('formula_name')}: Removed assignment")
+                    print(f"  ⚙️ Stripped assignment: '{old_expr}' → '{formula_expr}'")
             
             reprocessed_formula = {
                 'formula_name': formula.get('formula_name'),
@@ -1170,13 +1205,16 @@ def main():
             # Preserve output_column if present
             if 'output_column' in formula:
                 reprocessed_formula['output_column'] = formula['output_column']
+                print(f"  Output column: {formula['output_column']}")
             
             reprocessed_formulas.append(reprocessed_formula)
         
+        print(f"\n✅ Reprocessed {len(reprocessed_formulas)} formulas")
+        print(f"   Pre-mapped count: {sum(1 for f in reprocessed_formulas if f['is_pre_mapped'])}")
+        print("="*80 + "\n")
+        
         st.session_state.formulas = reprocessed_formulas
         st.session_state.formulas_reprocessed = True
-        st.success(f"✅ Reprocessed {len(reprocessed_formulas)} formulas ({sum(1 for f in reprocessed_formulas if f['is_pre_mapped'])} detected as pre-mapped)")
-        st.rerun()
     
     if not has_mappings or not has_formulas:
         st.warning("⚠️ Missing configuration files")
@@ -1186,32 +1224,37 @@ def main():
         with col1:
             st.markdown("### 📋 Variable Mappings")
             if has_mappings:
-                st.success(f"✅ {len(st.session_state.header_to_var_mapping)} loaded")
+                col_a, col_b = st.columns([2, 1])
+                with col_a:
+                    st.success(f"✅ {len(st.session_state.header_to_var_mapping)} mappings loaded")
+                with col_b:
+                    if st.button("🗑️ Clear", key="clear_mappings", help="Remove current mappings"):
+                        del st.session_state.header_to_var_mapping
+                        if 'mappings_normalized' in st.session_state:
+                            del st.session_state.mappings_normalized
+                        st.rerun()
                 
-                # DEBUG: Show mapping structure
-                with st.expander("🔍 Debug: Mapping Structure"):
-                    st.write("**First 5 mappings:**")
-                    sample_mappings = dict(list(st.session_state.header_to_var_mapping.items())[:5])
-                    for k, v in sample_mappings.items():
-                        st.write(f"  `{k}` → `{v}` (Key type: {type(k).__name__}, Value type: {type(v).__name__})")
-                
-                # Add download button for existing mappings
+                # Download button for existing mappings
                 mappings_json = json.dumps(st.session_state.header_to_var_mapping, indent=2)
                 st.download_button(
-                    label="📥 Download Current Mappings",
+                    label="📥 Download Mappings",
                     data=mappings_json,
                     file_name="variable_mappings.json",
-                    mime="application/json"
+                    mime="application/json",
+                    use_container_width=True
                 )
+                
+                # Debug viewer (collapsed by default)
+                with st.expander("🔍 Debug: View Mappings"):
+                    st.write(f"**Total: {len(st.session_state.header_to_var_mapping)} mappings**")
+                    st.json(dict(list(st.session_state.header_to_var_mapping.items())[:10]))
             
             uploaded_mapping = st.file_uploader("Upload Mappings (JSON)", type=['json'], key="map_up")
             if uploaded_mapping and not has_mappings:
                 try:
                     imported_mappings = import_mappings_from_json(uploaded_mapping)
-                    st.success(f"✅ {len(imported_mappings)} mappings")
-                    # AUTO-APPLY: Removed button requirement
                     st.session_state.header_to_var_mapping = imported_mappings
-                    st.info("📝 Mappings auto-applied!")
+                    st.success(f"✅ {len(imported_mappings)} mappings loaded")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -1219,25 +1262,41 @@ def main():
         with col2:
             st.markdown("### 🧮 Formulas")
             if has_formulas:
-                st.success(f"✅ {len(st.session_state.formulas)} loaded")
+                col_a, col_b = st.columns([2, 1])
+                with col_a:
+                    st.success(f"✅ {len(st.session_state.formulas)} formulas loaded")
+                with col_b:
+                    if st.button("🗑️ Clear", key="clear_formulas", help="Remove current formulas"):
+                        del st.session_state.formulas
+                        if 'formulas_reprocessed' in st.session_state:
+                            del st.session_state.formulas_reprocessed
+                        st.rerun()
                 
-                # DEBUG: Show formula structure
-                with st.expander("🔍 Debug: Formula Structure"):
-                    st.write("**First 3 formulas:**")
+                # Download button for formulas
+                formulas_json = json.dumps(st.session_state.formulas, indent=2)
+                st.download_button(
+                    label="📥 Download Formulas",
+                    data=formulas_json,
+                    file_name="formulas.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+                
+                # Debug viewer (collapsed by default)
+                with st.expander("🔍 Debug: View Formulas"):
+                    st.write(f"**Total: {len(st.session_state.formulas)} formulas**")
+                    pre_mapped_count = sum(1 for f in st.session_state.formulas if f.get('is_pre_mapped'))
+                    st.write(f"**Pre-mapped: {pre_mapped_count}**")
                     for i, f in enumerate(st.session_state.formulas[:3]):
-                        st.write(f"**Formula {i+1}: {f.get('formula_name')}**")
-                        st.write(f"  - Expression: `{f.get('formula_expression', 'N/A')[:80]}`")
-                        st.write(f"  - Pre-mapped: {f.get('is_pre_mapped', False)}")
-                        st.write(f"  - Has brackets: {'[' in f.get('formula_expression', '')}")
+                        st.write(f"**{i+1}. {f.get('formula_name')}**")
+                        st.code(f.get('formula_expression', 'N/A')[:100], language="python")
             
             uploaded_formulas = st.file_uploader("Upload Formulas (JSON)", type=['json'], key="form_up")
             if uploaded_formulas and not has_formulas:
                 try:
                     imported_formulas = import_formulas_from_json(uploaded_formulas)
-                    st.success(f"✅ {len(imported_formulas)} formulas")
-                    # AUTO-APPLY: Removed button requirement
                     st.session_state.formulas = imported_formulas
-                    st.info("📝 Formulas auto-applied!")
+                    st.success(f"✅ {len(imported_formulas)} formulas loaded")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -1247,19 +1306,48 @@ def main():
     else:
         col1, col2 = st.columns(2)
         with col1:
-            st.success(f"✅ **Mappings:** {len(st.session_state.header_to_var_mapping)}")
+            col_a, col_b = st.columns([2, 1])
+            with col_a:
+                st.success(f"✅ **Mappings:** {len(st.session_state.header_to_var_mapping)}")
+            with col_b:
+                if st.button("🗑️ Clear", key="clear_mappings_main", help="Remove current mappings"):
+                    del st.session_state.header_to_var_mapping
+                    if 'mappings_normalized' in st.session_state:
+                        del st.session_state.mappings_normalized
+                    st.rerun()
             
-            # NEW: Add download button for existing mappings
+            # Download button for existing mappings
             mappings_json = json.dumps(st.session_state.header_to_var_mapping, indent=2)
             st.download_button(
-                label="📥 Download Current Mappings",
+                label="📥 Download Mappings",
                 data=mappings_json,
                 file_name="variable_mappings.json",
                 mime="application/json",
-                key="download_mappings"
+                key="download_mappings",
+                use_container_width=True
             )
+            
         with col2:
-            st.success(f"✅ **Formulas:** {len(st.session_state.formulas)}")
+            col_a, col_b = st.columns([2, 1])
+            with col_a:
+                st.success(f"✅ **Formulas:** {len(st.session_state.formulas)}")
+            with col_b:
+                if st.button("🗑️ Clear", key="clear_formulas_main", help="Remove current formulas"):
+                    del st.session_state.formulas
+                    if 'formulas_reprocessed' in st.session_state:
+                        del st.session_state.formulas_reprocessed
+                    st.rerun()
+            
+            # Download button for formulas
+            formulas_json = json.dumps(st.session_state.formulas, indent=2)
+            st.download_button(
+                label="📥 Download Formulas",
+                data=formulas_json,
+                file_name="formulas.json",
+                mime="application/json",
+                key="download_formulas",
+                use_container_width=True
+            )
         
     if not has_data:
         st.warning("⚠️ No data file loaded")
@@ -1275,10 +1363,8 @@ def main():
                 else:
                     df = pd.read_excel(uploaded_data)
                 
-                st.success(f"✅ {len(df)} rows, {len(df.columns)} columns")
-                # AUTO-APPLY: Removed button requirement
                 st.session_state.excel_df = df
-                st.info("📝 Data auto-applied!")
+                st.success(f"✅ Loaded {len(df)} rows, {len(df.columns)} columns")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")

@@ -68,9 +68,6 @@ INPUT_VARIABLES = {
     'Income_Benefit_Frequency': 'Frequency of income benefit payout',
     'DATE_OF_SURRENDER': 'Date when policy is surrendered',
     'no_of_premium_paid': 'Years passed since date of commencement till FUP',
-    'maturity_date': 'Date of commencement + (BENEFIT_TERM * 12 months)',
-    'policy_year': 'Years passed + 1 between date of commencement and surrender date',
-    'BENEFIT_TERM': 'The duration (in years) for which the policy benefits are payable',
     'GSV_FACTOR': 'Guaranteed Surrender Value Factor',
     'SSV1_FACTOR': 'Surrender Value Factor',
     'SSV3_FACTOR': 'Special Surrender Value Factor for paid-up income benefits',
@@ -85,7 +82,7 @@ BASIC_DERIVED_FORMULAS = {
     'policy_year': 'Calculate based on difference between TERM_START_DATE and DATE_OF_SURRENDER + 1',
     'maturity_date': 'TERM_START_DATE + (BENEFIT_TERM* 12) months',
     'CAPITAL_FUND_VALUE': 'Total policy fund value including bonuses',
-    'FUND_FACTOR': 'Factor to compute fund value based on premiums and term'
+    'FUND_FACTOR': 'A factor used to compute the fund value based on the total premiums paid and the policy term'
 }
 
 DEFAULT_TARGET_OUTPUT_VARIABLES = [
@@ -662,7 +659,7 @@ def main():
         col_restore1, col_restore2 = st.columns(2)
         
         with col_restore1:
-            uploaded_json = st.file_uploader("Upload previously exported mappings JSON", type=['json'], key="restore_json")
+            uploaded_json = st.file_uploader("Upload previously exported Formulas JSON", type=['json'], key="restore_json")
             if uploaded_json:
                 try:
                     import_data = json.loads(uploaded_json.read())
