@@ -1096,6 +1096,7 @@ def main():
             
         # Export mapped formulas
         st.markdown("---")
+        st.subheader("📥 Export Mapped Formulas json to proceed to calculations")
         col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 1])
         
         if "show_proceed_button" not in st.session_state:
