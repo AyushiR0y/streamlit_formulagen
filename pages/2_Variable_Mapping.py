@@ -994,8 +994,6 @@ def main():
                 st.markdown("**Removed Headers:**")
                 st.write(st.session_state.removed_headers)
         
-        # Summary statistics
-        st.markdown("---")
         col_stat1, col_stat2, col_stat3 = st.columns(3)
         
         total_headers = len(st.session_state.excel_headers)
@@ -1009,10 +1007,7 @@ def main():
         with col_stat3:
             st.metric("Mapped Variables", mapped_count)
         
-        
-        
-        # --- Confirm & Export Section ---
-        st.markdown("---")
+
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1]) # Changed to 3 columns for JSON and CSV
         
         with col_btn1:
