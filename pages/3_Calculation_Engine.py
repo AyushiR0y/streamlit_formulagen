@@ -770,14 +770,13 @@ def import_mappings_from_json(json_file) -> Dict[str, str]:
         raise ValueError(f"Error reading JSON: {str(e)}")
 
 def import_formulas_from_json(json_file) -> List[Dict]:
-    """Import formulas from JSON file - UPDATED to auto-detect pre-mapped formulas and handle = assignments"""
+    """Import formulas from JSON file - Use mapped_expression if available"""
     try:
         content = json_file.read()
         data = json.loads(content)
         
         if isinstance(data, dict) and 'formulas' in data:
             formulas = data['formulas']
-            st.info("📊 Extraction format detected")
         elif isinstance(data, list):
             formulas = data
         else:
@@ -785,50 +784,30 @@ def import_formulas_from_json(json_file) -> List[Dict]:
         
         validated_formulas = []
         for formula in formulas:
-            is_pre_mapped = False
-            final_expression = ""
-            original_expression = ""
-            
-            # Check if mapped_expression exists
-            if 'mapped_expression' in formula:
-                final_expression = formula['mapped_expression']
-                original_expression = formula.get('original_expression', '')
-                # Auto-detect if it contains brackets
-                is_pre_mapped = '[' in final_expression and ']' in final_expression
+            # CRITICAL: Use mapped_expression if available, otherwise use formula_expression
+            if 'mapped_expression' in formula and formula['mapped_expression']:
+                formula_expr = formula['mapped_expression']
+                is_pre_mapped = True  # mapped_expression always has brackets
+            elif 'formula_expression' in formula:
+                formula_expr = formula.get('formula_expression', '')
+                is_pre_mapped = '[' in formula_expr and ']' in formula_expr
             else:
-                raw_expr = formula.get('formula_expression', '')
-                final_expression = raw_expr.strip('[]')
-                original_expression = raw_expr
-                # Auto-detect if original had brackets
-                is_pre_mapped = '[' in raw_expr and ']' in raw_expr
+                continue
             
-            # CRITICAL FIX: Auto-strip LHS from formulas with = sign
-            # Check if expression has assignment operator (but not ==, !=, <=, >=)
-            if '=' in final_expression and not any(op in final_expression for op in ['==', '!=', '<=', '>=']):
-                parts = final_expression.split('=')
+            # Strip = sign if present
+            if '=' in formula_expr and not any(op in formula_expr for op in ['==', '!=', '<=', '>=']):
+                parts = formula_expr.split('=')
                 if len(parts) >= 2:
-                    # Take everything after the FIRST = sign
-                    rhs = '='.join(parts[1:]).strip()
-                    lhs = parts[0].strip()
-                    
-                    st.info(f"🔧 Auto-cleaned formula: Removed LHS assignment `{lhs} =` from expression")
-                    final_expression = rhs
-            
-            # Override with explicit is_pre_mapped if provided
-            if 'is_pre_mapped' in formula:
-                is_pre_mapped = formula['is_pre_mapped']
+                    formula_expr = '='.join(parts[1:]).strip()
             
             if not formula.get('formula_name'):
                 continue
             
-            # Preserve output_column field if present
+            # Simplified structure - only essential fields
             validated_formula = {
                 'formula_name': formula['formula_name'],
-                'formula_expression': final_expression,
-                'original_expression': original_expression,
-                'is_pre_mapped': is_pre_mapped,
-                'description': formula.get('description', ''),
-                'variables_used': formula.get('variables_used', '')
+                'formula_expression': formula_expr,
+                'is_pre_mapped': is_pre_mapped
             }
             
             # Add output_column if specified
@@ -837,7 +816,7 @@ def import_formulas_from_json(json_file) -> List[Dict]:
             
             validated_formulas.append(validated_formula)
         
-        st.info(f"✅ Loaded {len(validated_formulas)} formulas ({sum(1 for f in validated_formulas if f['is_pre_mapped'])} pre-mapped)")
+        print(f"\n✅ Loaded {len(validated_formulas)} formulas ({sum(1 for f in validated_formulas if f['is_pre_mapped'])} pre-mapped)")
         
         return validated_formulas
         
@@ -1177,12 +1156,16 @@ def main():
         for idx, formula in enumerate(st.session_state.formulas):
             print(f"\nFormula {idx+1}: {formula.get('formula_name')}")
             
-            # Check if formula has mapped_expression or brackets
-            formula_expr = formula.get('formula_expression', '')
-            print(f"  Original expression: {formula_expr}")
+            # CRITICAL: Use mapped_expression if available, otherwise formula_expression
+            if 'mapped_expression' in formula and formula['mapped_expression']:
+                formula_expr = formula['mapped_expression']
+                is_pre_mapped = True  # mapped_expression always has brackets
+                print(f"  Using mapped_expression: {formula_expr}")
+            else:
+                formula_expr = formula.get('formula_expression', '')
+                is_pre_mapped = '[' in formula_expr and ']' in formula_expr
+                print(f"  Using formula_expression: {formula_expr}")
             
-            # Auto-detect if it should be pre-mapped
-            is_pre_mapped = '[' in formula_expr and ']' in formula_expr
             print(f"  Has brackets: {is_pre_mapped}")
             
             # Strip = sign if present
@@ -1193,13 +1176,11 @@ def main():
                     formula_expr = '='.join(parts[1:]).strip()
                     print(f"  ⚙️ Stripped assignment: '{old_expr}' → '{formula_expr}'")
             
+            # Simplified structure - only essential fields
             reprocessed_formula = {
                 'formula_name': formula.get('formula_name'),
                 'formula_expression': formula_expr,
-                'original_expression': formula.get('original_expression', formula_expr),
-                'is_pre_mapped': is_pre_mapped,
-                'description': formula.get('description', ''),
-                'variables_used': formula.get('variables_used', '')
+                'is_pre_mapped': is_pre_mapped
             }
             
             # Preserve output_column if present
@@ -1224,32 +1205,28 @@ def main():
         with col1:
             st.markdown("### 📋 Variable Mappings")
             if has_mappings:
-                col_a, col_b = st.columns([2, 1])
-                with col_a:
-                    st.success(f"✅ {len(st.session_state.header_to_var_mapping)} mappings loaded")
-                with col_b:
-                    if st.button("🗑️ Clear", key="clear_mappings", help="Remove current mappings"):
+                # Single line with count and icons
+                col_info, col_download, col_clear = st.columns([3, 1, 1])
+                with col_info:
+                    st.success(f"✅ {len(st.session_state.header_to_var_mapping)} loaded")
+                with col_download:
+                    mappings_json = json.dumps(st.session_state.header_to_var_mapping, indent=2)
+                    st.download_button(
+                        label="📥",
+                        data=mappings_json,
+                        file_name="variable_mappings.json",
+                        mime="application/json",
+                        help="Download mappings",
+                        use_container_width=True
+                    )
+                with col_clear:
+                    if st.button("🗑️", key="clear_mappings", help="Clear mappings", use_container_width=True):
                         del st.session_state.header_to_var_mapping
                         if 'mappings_normalized' in st.session_state:
                             del st.session_state.mappings_normalized
                         st.rerun()
-                
-                # Download button for existing mappings
-                mappings_json = json.dumps(st.session_state.header_to_var_mapping, indent=2)
-                st.download_button(
-                    label="📥 Download Mappings",
-                    data=mappings_json,
-                    file_name="variable_mappings.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-                
-                # Debug viewer (collapsed by default)
-                with st.expander("🔍 Debug: View Mappings"):
-                    st.write(f"**Total: {len(st.session_state.header_to_var_mapping)} mappings**")
-                    st.json(dict(list(st.session_state.header_to_var_mapping.items())[:10]))
             
-            uploaded_mapping = st.file_uploader("Upload Mappings (JSON)", type=['json'], key="map_up")
+            uploaded_mapping = st.file_uploader("Upload Mappings (JSON)", type=['json'], key="map_up", label_visibility="collapsed")
             if uploaded_mapping and not has_mappings:
                 try:
                     imported_mappings = import_mappings_from_json(uploaded_mapping)
@@ -1262,36 +1239,28 @@ def main():
         with col2:
             st.markdown("### 🧮 Formulas")
             if has_formulas:
-                col_a, col_b = st.columns([2, 1])
-                with col_a:
-                    st.success(f"✅ {len(st.session_state.formulas)} formulas loaded")
-                with col_b:
-                    if st.button("🗑️ Clear", key="clear_formulas", help="Remove current formulas"):
+                # Single line with count and icons
+                col_info, col_download, col_clear = st.columns([3, 1, 1])
+                with col_info:
+                    st.success(f"✅ {len(st.session_state.formulas)} loaded")
+                with col_download:
+                    formulas_json = json.dumps(st.session_state.formulas, indent=2)
+                    st.download_button(
+                        label="📥",
+                        data=formulas_json,
+                        file_name="formulas.json",
+                        mime="application/json",
+                        help="Download formulas",
+                        use_container_width=True
+                    )
+                with col_clear:
+                    if st.button("🗑️", key="clear_formulas", help="Clear formulas", use_container_width=True):
                         del st.session_state.formulas
                         if 'formulas_reprocessed' in st.session_state:
                             del st.session_state.formulas_reprocessed
                         st.rerun()
-                
-                # Download button for formulas
-                formulas_json = json.dumps(st.session_state.formulas, indent=2)
-                st.download_button(
-                    label="📥 Download Formulas",
-                    data=formulas_json,
-                    file_name="formulas.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-                
-                # Debug viewer (collapsed by default)
-                with st.expander("🔍 Debug: View Formulas"):
-                    st.write(f"**Total: {len(st.session_state.formulas)} formulas**")
-                    pre_mapped_count = sum(1 for f in st.session_state.formulas if f.get('is_pre_mapped'))
-                    st.write(f"**Pre-mapped: {pre_mapped_count}**")
-                    for i, f in enumerate(st.session_state.formulas[:3]):
-                        st.write(f"**{i+1}. {f.get('formula_name')}**")
-                        st.code(f.get('formula_expression', 'N/A')[:100], language="python")
             
-            uploaded_formulas = st.file_uploader("Upload Formulas (JSON)", type=['json'], key="form_up")
+            uploaded_formulas = st.file_uploader("Upload Formulas (JSON)", type=['json'], key="form_up", label_visibility="collapsed")
             if uploaded_formulas and not has_formulas:
                 try:
                     imported_formulas = import_formulas_from_json(uploaded_formulas)
@@ -1306,48 +1275,51 @@ def main():
     else:
         col1, col2 = st.columns(2)
         with col1:
-            col_a, col_b = st.columns([2, 1])
-            with col_a:
+            # Single line with count and icons
+            col_info, col_download, col_clear = st.columns([3, 1, 1])
+            with col_info:
                 st.success(f"✅ **Mappings:** {len(st.session_state.header_to_var_mapping)}")
-            with col_b:
-                if st.button("🗑️ Clear", key="clear_mappings_main", help="Remove current mappings"):
+            with col_download:
+                mappings_json = json.dumps(st.session_state.header_to_var_mapping, indent=2)
+                st.download_button(
+                    label="📥",
+                    data=mappings_json,
+                    file_name="variable_mappings.json",
+                    mime="application/json",
+                    key="download_mappings",
+                    help="Download mappings",
+                    use_container_width=True
+                )
+            with col_clear:
+                if st.button("🗑️", key="clear_mappings_main", help="Clear mappings", use_container_width=True):
                     del st.session_state.header_to_var_mapping
                     if 'mappings_normalized' in st.session_state:
                         del st.session_state.mappings_normalized
                     st.rerun()
             
-            # Download button for existing mappings
-            mappings_json = json.dumps(st.session_state.header_to_var_mapping, indent=2)
-            st.download_button(
-                label="📥 Download Mappings",
-                data=mappings_json,
-                file_name="variable_mappings.json",
-                mime="application/json",
-                key="download_mappings",
-                use_container_width=True
-            )
-            
         with col2:
-            col_a, col_b = st.columns([2, 1])
-            with col_a:
+            # Single line with count and icons
+            col_info, col_download, col_clear = st.columns([3, 1, 1])
+            with col_info:
                 st.success(f"✅ **Formulas:** {len(st.session_state.formulas)}")
-            with col_b:
-                if st.button("🗑️ Clear", key="clear_formulas_main", help="Remove current formulas"):
+            with col_download:
+                formulas_json = json.dumps(st.session_state.formulas, indent=2)
+                st.download_button(
+                    label="📥",
+                    data=formulas_json,
+                    file_name="formulas.json",
+                    mime="application/json",
+                    key="download_formulas",
+                    help="Download formulas",
+                    use_container_width=True
+                )
+            with col_clear:
+                if st.button("🗑️", key="clear_formulas_main", help="Clear formulas", use_container_width=True):
                     del st.session_state.formulas
                     if 'formulas_reprocessed' in st.session_state:
                         del st.session_state.formulas_reprocessed
                     st.rerun()
-            
-            # Download button for formulas
-            formulas_json = json.dumps(st.session_state.formulas, indent=2)
-            st.download_button(
-                label="📥 Download Formulas",
-                data=formulas_json,
-                file_name="formulas.json",
-                mime="application/json",
-                key="download_formulas",
-                use_container_width=True
-            )
+        
         
     if not has_data:
         st.warning("⚠️ No data file loaded")
@@ -1371,10 +1343,7 @@ def main():
         return
     
     calc_df = st.session_state.excel_df
-    st.success(f"📊 Data: {len(calc_df)} rows, {len(calc_df.columns)} columns")
-    
-    with st.expander("📊 Data Preview"):
-        st.dataframe(calc_df.head(10), use_container_width=True)
+    st.info(f"📊 **Data:** {len(calc_df)} rows × {len(calc_df.columns)} columns")
         
     include_derived = st.checkbox("Include derived formulas", value=True, 
                                   help="Automatically include standard derived calculations")
