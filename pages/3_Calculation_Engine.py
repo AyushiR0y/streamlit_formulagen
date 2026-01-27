@@ -84,11 +84,6 @@ BASIC_DERIVED_FORMULAS = {
         'description': 'Policy year based on term start and surrender date',
         'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, DATE_OF_SURRENDER) / 12 + 1)',
         'variables': ['DATE_OF_SURRENDER', 'TERM_START_DATE']
-    },
-    'maturity_date': {
-        'description': 'Maturity date calculation',
-        'formula': 'ADD_MONTHS(TERM_START_DATE, BENEFIT_TERM * 12)',
-        'variables': ['TERM_START_DATE', 'BENEFIT_TERM']
     }
 }
 
