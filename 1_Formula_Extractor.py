@@ -573,6 +573,8 @@ class StableChunkedDocumentFormulaExtractor:
     - Capital Units references
     - ON_DEATH is an important qualifier
     - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
+    - Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sa_on_death as a new variable
+
 
     Examples:
     - If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
@@ -581,7 +583,6 @@ class StableChunkedDocumentFormulaExtractor:
     - If SSV was already extracted as a formula: use "SSV", not its components
     - If SSV1_AMT, SSV2_AMT, SSV3_AMT were extracted: use these in SSV formula instead of SSV1, SSV2, SSV3 names
     - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED
-    - Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sa_on_death as a new variable
 
     RESPONSE FORMAT:
     FORMULA_EXPRESSION: [mathematical expression using available variables]
