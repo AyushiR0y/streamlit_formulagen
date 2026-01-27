@@ -557,7 +557,8 @@ class VariableHeaderMatcher:
         
         return mappings
 
-    
+def enable_proceed_button():
+    st.session_state.show_proceed_button = True
     
 def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict[str, str]) -> List[Dict]:
     """
@@ -1097,14 +1098,20 @@ def main():
         st.markdown("---")
         col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 1])
         
+        if "show_proceed_button" not in st.session_state:
+            st.session_state.show_proceed_button = False
+
         with col_exp1:
             st.download_button(
                 label="📥 Download Formulas (JSON)",
                 data=json.dumps(mapped_formulas, indent=2),
                 file_name="mapped_formulas.json",
-                mime="application/json"
+                mime="application/json",
+                # When this is clicked, it triggers 'enable_proceed_button'
+                on_click=enable_proceed_button,
+                key="download_json_btn"
             )
-        
+                
         with col_exp2:
             csv_formula_data = pd.DataFrame(mapped_formulas).to_csv(index=False)
             st.download_button(
@@ -1113,10 +1120,12 @@ def main():
                 file_name="mapped_formulas.csv",
                 mime="text/csv"
             )
-        
+                
         with col_exp3:
-            if st.button("➡️ Proceed to Calculations", type="primary", key="goto_calc"):
-                st.switch_page("pages/3_Calculation_Engine.py")
+            # 3. The button ONLY exists if 'show_proceed_button' is True
+            if st.session_state.show_proceed_button:
+                if st.button("➡️ Proceed to Calculations", type="primary", key="goto_calc"):
+                    st.switch_page("pages/3_Calculation_Engine.py")
     
     # Footer
     st.markdown(
