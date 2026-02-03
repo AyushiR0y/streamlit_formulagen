@@ -770,7 +770,7 @@ def main():
                     st.session_state.selected_variables_for_mapping = st.multiselect(
                         "Select Variables to Map",
                         options=all_master_vars,
-                        default=st.session_state.selected_variables_for_mapping,
+                        default=valid_default_selection,
                         key="variable_filter_multiselect",
                         help="Variables NOT selected here will be ignored by the automatic mapper."
                     )
