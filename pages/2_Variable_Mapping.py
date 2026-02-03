@@ -60,7 +60,7 @@ INPUT_VARIABLES = {
     'TERM_START_DATE': 'Date when the policy starts',
     'FUP_Date': 'First Unpaid Premium date',
     'ENTRY_AGE': 'Age of the policyholder at policy inception',
-    'TOTAL_PREMIUM': 'Annual Premium amount',
+    'FULL_TERM_PREMIUM': 'Annual Premium amount',
     'BOOKING_FREQUENCY': 'Frequency of premium booking (monthly, quarterly, yearly)',
     'PREMIUM_TERM': 'Premium Paying Term - duration for paying premiums',
     'SUM_ASSURED': 'Sum Assured - guaranteed amount on maturity/death',
@@ -91,8 +91,8 @@ BASIC_DERIVED_FORMULAS = {
 DEFAULT_TARGET_OUTPUT_VARIABLES = [
     'TOTAL_PREMIUM_PAID', 'TEN_TIMES_AP', 'one_oh_five_percent_total_premium',
     'SUM_ASSURED_ON_DEATH', 'GSV', 'PAID_UP_SA',
-    'PAID_UP_SA_ON_DEATH', 'paid_up_income_benefit_amount',
-    'SSV1', 'SSV2', 'SSV3', 'SSV', 'SURRENDER_PAID_AMOUNT',
+    'PAID_UP_SA_ON_DEATH', 'PAID_UP_INCOME_INSTALLMENT',
+    'SSV1_AMT', 'SSV2_AMT', 'SSV3_AMT', 'SSV', 'SURRENDER_PAID_AMOUNT',
 ]
 def extract_variables_from_formulas(formulas: List[Dict]) -> Tuple[Set[str], Dict[str, str]]:
     """Extract all unique variables from formula expressions AND calculation steps
