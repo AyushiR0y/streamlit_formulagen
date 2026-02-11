@@ -582,7 +582,7 @@ class StableChunkedDocumentFormulaExtractor:
     - If SSV was already extracted as a formula: use "SSV", not its components. 
     - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED
     - Distinguish between PAID_UP_INCOME_INSTALLMENT and Income_Benefit_Amount
-    - For PAID_UP_INCOME_INSTALLMENT, Income_Benefit_Amount is the base, but frequency and premium term will also be relevant. Look for clues in the document about how to adjust the amount based on these factors.
+    - For PAID_UP_INCOME_INSTALLMENT, Income_Benefit_Amount * Income_Benefit_Frequency and premium term will also be relevant. Look for clues in the document about how to adjust the amount based on these factors.
 
     RESPONSE FORMAT:
     FORMULA_EXPRESSION: [mathematical expression using available variables]
