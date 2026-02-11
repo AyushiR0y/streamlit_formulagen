@@ -118,9 +118,9 @@ DEFAULT_TARGET_OUTPUT_VARIABLES = [
     'PAID_UP_SA',
     'PAID_UP_SA_ON_DEATH',
     'PAID_UP_INCOME_INSTALLMENT',
-    'SSV1_AMT',
-    'SSV2_AMT',
-    'SSV3_AMT',
+    'SSV1',
+    'SSV2',
+    'SSV3',
     'SSV',
     'SURRENDER_PAID_AMOUNT',
 ]
@@ -580,9 +580,9 @@ class StableChunkedDocumentFormulaExtractor:
     - If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
     - If document says "Sum Assured on Death is higher of sum assured, 10 times annual premium or amount of ROP benefit": return "MAX(SUM_ASSURED, 10 * ANNUAL_PREMIUM, ROP_Benefit)"
     - If SSV was already extracted as a formula: use "SSV", not its components. 
-    - If SSV1_AMT, SSV2_AMT, SSV3_AMT were extracted: use these in SSV formula instead of SSV1, SSV2, SSV3 names
     - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED
     - Distinguish between PAID_UP_INCOME_INSTALLMENT and Income_Benefit_Amount
+    - For PAID_UP_INCOME_INSTALLMENT, Income_Benefit_Amount is the base, but frequency and premium term will also be relevant. Look for clues in the document about how to adjust the amount based on these factors.
 
     RESPONSE FORMAT:
     FORMULA_EXPRESSION: [mathematical expression using available variables]
