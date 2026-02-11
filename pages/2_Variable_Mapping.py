@@ -92,7 +92,7 @@ DEFAULT_TARGET_OUTPUT_VARIABLES = [
     'TOTAL_PREMIUM_PAID', 'TEN_TIMES_AP', 'one_oh_five_percent_total_premium',
     'SUM_ASSURED_ON_DEATH', 'GSV', 'PAID_UP_SA',
     'PAID_UP_SA_ON_DEATH', 'PAID_UP_INCOME_INSTALLMENT',
-    'SSV1_AMT', 'SSV2_AMT', 'SSV3_AMT', 'SSV', 'SURRENDER_PAID_AMOUNT',
+    'SSV1', 'SSV2', 'SSV3', 'SSV', 'SURRENDER_PAID_AMOUNT',
 ]
 def extract_variables_from_formulas(formulas: List[Dict]) -> Tuple[Set[str], Dict[str, str]]:
     """Extract all unique variables from formula expressions AND calculation steps
