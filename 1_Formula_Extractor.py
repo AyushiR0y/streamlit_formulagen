@@ -574,7 +574,7 @@ class StableChunkedDocumentFormulaExtractor:
     - ON_DEATH is an important qualifier
     - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
     8. Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sum_assured_on_death as a new variable
-    9. For PAID_UP_INCOME_INSTALLMENT= Income_Benefit_Amount * Income_Benefit_Frequency will always be used. and premium term will also be relevant. Look for clues in the document about how to adjust the amount based on these factors.
+    9. For PAID_UP_INCOME_INSTALLMENT= Income_Benefit_Amount * Income_Benefit_Frequency will always be used.Along with that, number of premiums paid and premium term will also be relevant as given in the document.
 
     Examples:
     - If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV) for Surrender_Paid_Amount"
