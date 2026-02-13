@@ -207,11 +207,15 @@ def normalize_extracted_formulas(formulas: List[ExtractedFormula]) -> List[Extra
         if name_upper == "TOTAL_PREMIUM_PAID":
             expression = "FULL_TERM_PREMIUM*no_of_premium_paid*BOOKING_FREQUENCY"
 
-        if name_upper == "PAID_UP_SA_ON_DEATH":
-            expression = expression.replace(
-                "Present_Value_of_paid_up_sum_assured_on_death",
-                "PAID_UP_SA_ON_DEATH"
-            )
+        # Replace Present_value_of_paid_up_sum_assured_on_death with PAID_UP_SA_ON_DEATH
+        # Applied to ALL formulas (not just PAID_UP_SA_ON_DEATH) since this variable may appear in other expressions
+        # Case-insensitive to handle any capitalization variation
+        expression = re.sub(
+            r'present_value_of_paid_up_sum_assured_on_death',
+            'PAID_UP_SA_ON_DEATH',
+            expression,
+            flags=re.IGNORECASE
+        )
 
         if expression != formula.formula_expression:
             formula = ExtractedFormula(
