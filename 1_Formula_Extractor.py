@@ -77,7 +77,7 @@ INPUT_VARIABLES = {
     'FUP_Date': 'First Unpaid Premium date',
     'ENTRY_AGE': 'Age of the policyholder at policy inception',
     'FULL_TERM_PREMIUM': 'Annual Premium amount',
-    'BOOKING_FREQUENCY': 'Frequency of premium booking (monthly, quarterly, yearly)',
+    'BOOKING_FREQUENCY': 'Frequency of premium booking (monthly, quarterly, yearly), used in total premium paid calculation',
     'PREMIUM_TERM': 'Premium Payment Term',
     'SUM_ASSURED': 'Sum Assured - guaranteed amount on maturity/death',
     'Income_Benefit_Amount': 'Amount of income benefit',
@@ -564,6 +564,7 @@ class StableChunkedDocumentFormulaExtractor:
     6. If the exact formula is not clearly defined in the document:
     - Make a reasonable inference based on similar formulas
     - Use industry-standard calculations as fallback
+    - Provide a placeholder formula with low confidence
     - Example: If no formula found, you could return "{formula_name}"
     7. Pay close attention to formulas involving:
     - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
@@ -571,7 +572,7 @@ class StableChunkedDocumentFormulaExtractor:
     - Conditions like policy term > 3 years
     - Capital Units references
     - ON_DEATH is an important qualifier
-    - Total_premium_paid is the number of premiums paid multiplied by the premium amount multiplied by booking frequency. Full_term_premium is the annual premium amount.
+    - Total_premium_paid is the number of premiums paid * premium amount * booking frequency. Full_term_premium is the annual premium amount.
     8. Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sum_assured_on_death as a new variable
     9. For PAID_UP_INCOME_INSTALLMENT= Income_Benefit_Amount * Income_Benefit_Frequency will always be used.Along with that, number of premiums paid and premium term will also be relevant as given in the document.
 
