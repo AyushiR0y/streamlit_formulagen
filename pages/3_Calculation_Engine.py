@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Tuple
 import re
 from pathlib import Path
 from dataclasses import dataclass
@@ -77,7 +77,7 @@ class CalculationResult:
 BASIC_DERIVED_FORMULAS = {
     'no_of_premium_paid': {
         'description': 'Number of years of premiums paid (FUP_Date - TERM_START_DATE) / 12',
-        'formula': 'int(MONTHS_BETWEEN(TERM_START_DATE, FUP_Date) / 12)', 
+        'formula': 'MONTHS_BETWEEN(TERM_START_DATE, FUP_Date) / 12', 
         'variables': ['FUP_Date', 'TERM_START_DATE']
     },
     'policy_year': {
@@ -101,7 +101,27 @@ FORMULA_ALIASES = {
 }
 
 
-def get_output_column_name(formula_name: str, formula_info: Dict, var_to_header_mapping: Dict[str, str], header_to_var_mapping: Dict[str, str]) -> str:
+def build_var_to_headers(header_to_var_mapping: Dict[str, str]) -> Dict[str, List[str]]:
+    """Build reverse mapping: variable_name -> [list of headers]"""
+    var_to_headers: Dict[str, List[str]] = {}
+    for header, var_name in header_to_var_mapping.items():
+        if not var_name:
+            continue
+        var_to_headers.setdefault(var_name, []).append(header)
+    return var_to_headers
+
+
+def get_first_mapped_value(row: pd.Series, headers: List[str]) -> Tuple[Any, Optional[str]]:
+    """Get first non-NaN value from first mapped header that has data"""
+    for header in headers:
+        if header in row.index:
+            val = row[header]
+            if pd.notna(val):
+                return val, header
+    return None, None
+
+
+def get_output_column_name(formula_name: str, formula_info: Dict, var_to_header_mapping: Dict[str, List[str]], header_to_var_mapping: Dict[str, str]) -> str:
     """
     Determine the actual column name to use for a formula.
     
@@ -382,8 +402,8 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
     """
     var_values = {}
     
-    # Create reverse mapping: variable_name -> header_name
-    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
+    # Create reverse mapping: variable_name -> [list of headers] (supports 1-to-many)
+    var_to_header_mapping = build_var_to_headers(header_to_var_mapping)
     
     # 1. EXTRACT Bracketed Headers [Name] for Pre-Mapped formulas
     bracketed_headers = set()
@@ -414,12 +434,10 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
             
             # PRIORITY 3: Check if header_name is a variable that maps to a column
             if header_name in var_to_header_mapping:
-                actual_header = var_to_header_mapping[header_name]
-                if actual_header in row.index:
-                    val = row[actual_header]
-                    if pd.notna(val):
-                        var_values[f"[{header_name}]"] = val
-                        continue
+                val, actual_header = get_first_mapped_value(row, var_to_header_mapping[header_name])
+                if actual_header is not None:
+                    var_values[f"[{header_name}]"] = val
+                    continue
             
             # PRIORITY 4: Case-insensitive column match
             for col in row.index:
@@ -515,21 +533,14 @@ def calculate_row(row: pd.Series, formula_expr: str, header_to_var_mapping: Dict
                     continue
         
         # PRIORITY 3: Check if var maps to a header via header_to_var_mapping
-        mapped_header = None
-        
-        if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
-            mapped_header = header_to_var_mapping[var_name]
-            print(f"   Checking header_to_var mapping: {var_name} → {mapped_header}")
-        elif var_name in var_to_header_mapping:
-            mapped_header = var_to_header_mapping[var_name]
-            print(f"   Checking var_to_header mapping: {var_name} → {mapped_header}")
-        
-        if mapped_header and mapped_header in row.index:
-            val = row[mapped_header]
-            if pd.notna(val):
+        mapped_headers = var_to_header_mapping.get(var_name, [])
+        if mapped_headers:
+            print(f"   Checking var_to_header mapping: {var_name} → {mapped_headers}")
+            val, actual_header = get_first_mapped_value(row, mapped_headers)
+            if actual_header is not None:
                 var_values[var_name] = val
-                found_source = f"Mapping: {var_name} → {mapped_header}"
-                print(f"✅ Found {var_name} via mapping {mapped_header} = {val}")
+                found_source = f"Mapping: {var_name} → {actual_header}"
+                print(f"✅ Found {var_name} via mapping {actual_header} = {val}")
                 continue
         
         # PRIORITY 4: Case-insensitive search
@@ -600,8 +611,8 @@ def run_calculations(df: pd.DataFrame,
     result_df = df.copy()
     calculation_results = []
     
-    # Create reverse mapping: variable_name -> header_name
-    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
+    # Create reverse mapping: variable_name -> [list of headers] (supports 1-to-many)
+    var_to_header_mapping = build_var_to_headers(header_to_var_mapping)
     
     all_formulas = []
     if include_derived:
@@ -697,9 +708,9 @@ def run_calculations(df: pd.DataFrame,
                 for h in headers_in_formula:
                     val = None
                     if h in var_to_header_mapping:
-                        actual_col = var_to_header_mapping[h]
-                        val = first_row.get(actual_col, "Not found")
-                        print(f"    [{h}] → {actual_col} = {val}")
+                        val, actual_col = get_first_mapped_value(first_row, var_to_header_mapping[h])
+                        display_col = actual_col if actual_col is not None else var_to_header_mapping[h]
+                        print(f"    [{h}] → {display_col} = {val if actual_col is not None else 'Not found'}")
                     elif h in first_row.index:
                         val = first_row[h]
                         print(f"    [{h}] (direct) = {val}")
@@ -861,7 +872,7 @@ def show_detailed_calculations_for_row(result_df: pd.DataFrame, formulas: List[D
                                        row_idx: int):
     """Show detailed step-by-step calculations for a specific row"""
     
-    var_to_header_mapping = {v: k for k, v in header_to_var_mapping.items() if v}
+    var_to_header_mapping = build_var_to_headers(header_to_var_mapping)
     
     # Include derived formulas
     all_formulas = get_derived_formulas() + formulas
@@ -929,11 +940,9 @@ def show_detailed_calculations_for_row(result_df: pd.DataFrame, formulas: List[D
                     # PRIORITY 3: Check mapping
                     if val is None or pd.isna(val):
                         if header_name in var_to_header_mapping:
-                            actual_header = var_to_header_mapping[header_name]
-                            if actual_header in row.index:
-                                val = row[actual_header]
-                                if pd.notna(val):
-                                    source = f"Mapping → {actual_header}"
+                            val, actual_header = get_first_mapped_value(row, var_to_header_mapping[header_name])
+                            if actual_header is not None:
+                                source = f"Mapping → {actual_header}"
                     
                     if val is None or pd.isna(val):
                         val = 0.0
@@ -979,18 +988,10 @@ def show_detailed_calculations_for_row(result_df: pd.DataFrame, formulas: List[D
                     
                     # PRIORITY 3: Check mapping
                     if val is None or pd.isna(val):
-                        if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
-                            mapped_header = header_to_var_mapping[var_name]
-                            if mapped_header in row.index:
-                                val = row[mapped_header]
-                                if pd.notna(val):
-                                    source = f"Mapping → {mapped_header}"
-                        elif var_name in var_to_header_mapping:
-                            mapped_header = var_to_header_mapping[var_name]
-                            if mapped_header in row.index:
-                                val = row[mapped_header]
-                                if pd.notna(val):
-                                    source = f"Reverse Mapping → {mapped_header}"
+                        if var_name in var_to_header_mapping:
+                            val, actual_header = get_first_mapped_value(row, var_to_header_mapping[var_name])
+                            if actual_header is not None:
+                                source = f"Mapping → {actual_header}"
                     
                     if val is None or pd.isna(val):
                         val = 0.0
@@ -1065,18 +1066,10 @@ def show_detailed_calculations_for_row(result_df: pd.DataFrame, formulas: List[D
                     
                     # PRIORITY 3: Check mapping
                     if val is None or pd.isna(val):
-                        if var_name in header_to_var_mapping and header_to_var_mapping[var_name]:
-                            mapped_header = header_to_var_mapping[var_name]
-                            if mapped_header in row.index:
-                                val = row[mapped_header]
-                                if pd.notna(val):
-                                    source = f"Mapping → {mapped_header}"
-                        elif var_name in var_to_header_mapping:
-                            mapped_header = var_to_header_mapping[var_name]
-                            if mapped_header in row.index:
-                                val = row[mapped_header]
-                                if pd.notna(val):
-                                    source = f"Reverse Mapping → {mapped_header}"
+                        if var_name in var_to_header_mapping:
+                            val, actual_header = get_first_mapped_value(row, var_to_header_mapping[var_name])
+                            if actual_header is not None:
+                                source = f"Mapping → {actual_header}"
                     
                     if val is None or pd.isna(val):
                         val = 0.0
