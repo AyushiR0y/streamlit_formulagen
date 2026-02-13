@@ -194,6 +194,39 @@ def extract_formulas_cached(
         ],
         
     }
+
+
+def normalize_extracted_formulas(formulas: List[ExtractedFormula]) -> List[ExtractedFormula]:
+    """Apply post-processing rules to extracted formulas before display/export."""
+    normalized = []
+
+    for formula in formulas:
+        name_upper = (formula.formula_name or "").upper()
+        expression = formula.formula_expression or ""
+
+        if name_upper == "TOTAL_PREMIUM_PAID":
+            expression = "FULL_TERM_PREMIUM*no_of_premium_paid*BOOKING_FREQUENCY"
+
+        if name_upper == "PAID_UP_SA_ON_DEATH":
+            expression = expression.replace(
+                "Present_value_of_paid_up_sum_assured_on_death",
+                "PAID_UP_SA_ON_DEATH"
+            )
+
+        if expression != formula.formula_expression:
+            formula = ExtractedFormula(
+                formula_name=formula.formula_name,
+                formula_expression=expression,
+                variants_info=formula.variants_info,
+                business_context=formula.business_context,
+                source_method=formula.source_method,
+                document_evidence=formula.document_evidence,
+                specific_variables=formula.specific_variables
+            )
+
+        normalized.append(formula)
+
+    return normalized
 class StableChunkedDocumentFormulaExtractor:
     """Extracts formulas from large documents using stable chunking ratios"""
 
@@ -942,6 +975,8 @@ def main():
                                             )
                                             for f in result_dict['extracted_formulas']
                                         ]
+
+                                        extracted_formulas = normalize_extracted_formulas(extracted_formulas)
                                         
                                         extraction_result = DocumentExtractionResult(
                                             input_variables=result_dict['input_variables'],
@@ -956,6 +991,9 @@ def main():
                                             target_outputs=st.session_state.selected_output_variables
                                         )
                                         extraction_result = extractor.extract_formulas_from_document(text)
+                                        extraction_result.extracted_formulas = normalize_extracted_formulas(
+                                            extraction_result.extracted_formulas
+                                        )
                                                             
                                     st.session_state.extraction_result = extraction_result
                                     # Convert to editable format
