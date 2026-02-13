@@ -77,7 +77,7 @@ INPUT_VARIABLES = {
     'FUP_Date': 'First Unpaid Premium date',
     'ENTRY_AGE': 'Age of the policyholder at policy inception',
     'FULL_TERM_PREMIUM': 'Annual Premium amount',
-    'BOOKING_FREQUENCY': 'Frequency of premium booking (monthly, quarterly, yearly), used in total premium paid calculation',
+    'BOOKING_FREQUENCY': 'Frequency of premium payments (monthly, quarterly, yearly), used in total premium paid calculation',
     'PREMIUM_TERM': 'Premium Payment Term',
     'SUM_ASSURED': 'Sum Assured - guaranteed amount on maturity/death',
     'Income_Benefit_Amount': 'Amount of income benefit',
