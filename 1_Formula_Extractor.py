@@ -209,7 +209,7 @@ def normalize_extracted_formulas(formulas: List[ExtractedFormula]) -> List[Extra
 
         if name_upper == "PAID_UP_SA_ON_DEATH":
             expression = expression.replace(
-                "Present_value_of_paid_up_sum_assured_on_death",
+                "Present_Value_of_paid_up_sum_assured_on_death",
                 "PAID_UP_SA_ON_DEATH"
             )
 
