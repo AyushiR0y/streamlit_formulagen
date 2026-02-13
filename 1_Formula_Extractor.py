@@ -205,7 +205,7 @@ def normalize_extracted_formulas(formulas: List[ExtractedFormula]) -> List[Extra
         expression = formula.formula_expression or ""
 
         if name_upper == "TOTAL_PREMIUM_PAID":
-            expression = "FULL_TERM_PREMIUM*no_of_premium_paid*BOOKING_FREQUENCY"
+            expression = "FULL_TERM_PREMIUM * no_of_premium_paid * BOOKING_FREQUENCY"
 
         # Replace Present_value_of_paid_up_sum_assured_on_death with PAID_UP_SA_ON_DEATH
         # Applied to ALL formulas (not just PAID_UP_SA_ON_DEATH) since this variable may appear in other expressions
