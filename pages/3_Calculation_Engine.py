@@ -692,22 +692,24 @@ def run_calculations(df: pd.DataFrame,
         if formula_name.upper() == 'GSV':
             print(f"\n⚠️ SPECIAL HANDLING FOR GSV:")
             
-            # Look for GSV input columns in the original data
-            gsv_input_cols = [col for col in result_df.columns if 'GSV' in col.upper() and col not in linked_output_cols]
+            # Look for GSV input columns (columns with 'gsv' that aren't the output column)
+            gsv_input_cols = [col for col in result_df.columns if 'gsv' in col.lower() and col not in [output_col]]
             
             if gsv_input_cols:
-                print(f"   Found GSV input column(s): {gsv_input_cols}")
                 gsv_source_col = gsv_input_cols[0]
+                print(f"   Found GSV input column: {gsv_source_col}")
                 
                 # Count non-null GSV values in the source column
-                gsv_non_null_count = result_df[gsv_source_col].notna().sum()
+                gsv_values = result_df[gsv_source_col].dropna()
+                gsv_non_null_count = len(gsv_values)
                 print(f"   {gsv_non_null_count} non-null values found in '{gsv_source_col}'")
                 
                 if gsv_non_null_count > 0:
-                    print(f"   ✅ Copying GSV values directly without calculation")
-                    # Copy GSV values from source to all linked output columns
+                    print(f"   ✅ Copying GSV values directly to {linked_output_cols} without calculation")
+                    # Copy GSV values from source to output column(s)
                     for col in linked_output_cols:
                         result_df[col] = result_df[gsv_source_col].copy()
+                    
                     success_count = gsv_non_null_count
                     total_rows = len(result_df)
                     errors = []
@@ -717,12 +719,12 @@ def run_calculations(df: pd.DataFrame,
                     status_text.text(f"Processing {formula_idx+1}/{len(all_formulas)}: {formula_name} (Direct copy)")
                     progress_bar.progress((formula_idx + 1) / len(all_formulas))
                     
-                    # Jump to next formula
-                    print(f"   📊 Results: {success_count}/{total_rows} rows updated")
+                    print(f"   📊 Results: {success_count}/{total_rows} rows updated from {gsv_source_col}")
                     print(f"✅ GSV processing complete - skipping calculation\n")
+                    # Jump to next formula
                     continue
                 else:
-                    print(f"   No values found, falling back to normal calculation")
+                    print(f"   No non-null values found, falling back to normal calculation")
             else:
                 print(f"   No GSV input columns found, proceeding with normal calculation")
 
