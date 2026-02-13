@@ -688,6 +688,44 @@ def run_calculations(df: pd.DataFrame,
         if output_col != formula_name:
             print(f"   ℹ️ Primary output column '{output_col}' differs from formula name '{formula_name}'")
 
+        # SPECIAL CASE: GSV - Use existing GSV values without calculation
+        if formula_name.upper() == 'GSV':
+            print(f"\n⚠️ SPECIAL HANDLING FOR GSV:")
+            
+            # Look for GSV input columns in the original data
+            gsv_input_cols = [col for col in result_df.columns if 'GSV' in col.upper() and col not in linked_output_cols]
+            
+            if gsv_input_cols:
+                print(f"   Found GSV input column(s): {gsv_input_cols}")
+                gsv_source_col = gsv_input_cols[0]
+                
+                # Count non-null GSV values in the source column
+                gsv_non_null_count = result_df[gsv_source_col].notna().sum()
+                print(f"   {gsv_non_null_count} non-null values found in '{gsv_source_col}'")
+                
+                if gsv_non_null_count > 0:
+                    print(f"   ✅ Copying GSV values directly without calculation")
+                    # Copy GSV values from source to all linked output columns
+                    for col in linked_output_cols:
+                        result_df[col] = result_df[gsv_source_col].copy()
+                    success_count = gsv_non_null_count
+                    total_rows = len(result_df)
+                    errors = []
+                    
+                    # Skip normal calculation for this formula
+                    success_rate = (success_count / total_rows * 100) if total_rows > 0 else 0
+                    status_text.text(f"Processing {formula_idx+1}/{len(all_formulas)}: {formula_name} (Direct copy)")
+                    progress_bar.progress((formula_idx + 1) / len(all_formulas))
+                    
+                    # Jump to next formula
+                    print(f"   📊 Results: {success_count}/{total_rows} rows updated")
+                    print(f"✅ GSV processing complete - skipping calculation\n")
+                    continue
+                else:
+                    print(f"   No values found, falling back to normal calculation")
+            else:
+                print(f"   No GSV input columns found, proceeding with normal calculation")
+
         errors = []
         success_count = 0
         total_rows = len(result_df)
