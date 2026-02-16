@@ -1051,9 +1051,20 @@ def main():
             # Filter out removed headers
             active_headers = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
             
+            # Define business rules for validation
+            forbidden_mappings = {
+                'POLICY_REF': ['policy_year'],
+                'DATE_OF_PAYMENT': ['DATE_OF_SURRENDER'],
+                'INTERIM_BONUS': ['BENEFIT_TERM'],
+                'ADV_PREMIUM': ['PREMIUM_TERM'],
+                'ST_MVA_AMOUNT': ['SURRENDER_PAID_AMOUNT'],
+            }
+            exact_match_required = {'DIS_ADV_PREMIUM', 'SUSP_COLLECT_AMT', 'ANNUITY_AMOUNT', 'WOO_PV_VALUE'}
+            
             # Create a form to batch updates
             with st.form(key="mapping_form"):
                 updated_mappings = {}
+                violations = []  # Track violations to show at end
                 
                 for header in active_headers:
                     # Get current mapping for this header
@@ -1085,6 +1096,30 @@ def main():
                         
                         # Store in temporary dict (will be applied on form submit)
                         final_var = "" if new_var == "(None of the following)" else new_var
+                        
+                        # INLINE VALIDATION: Check business rules
+                        if final_var:  # Only validate if something is selected
+                            # Check forbidden mappings
+                            for forbidden_header, forbidden_targets in forbidden_mappings.items():
+                                if header.upper() == forbidden_header.upper():
+                                    for forbidden_target in forbidden_targets:
+                                        if final_var.upper() == forbidden_target.upper():
+                                            final_var = ""  # Block this mapping
+                                            violations.append(f"{header} → {new_var}")
+                                            break
+                            
+                            # Check exact match requirements
+                            if header.upper() in {v.upper() for v in exact_match_required}:
+                                if not any(v.upper() == header.upper() for v in current_variables):
+                                    final_var = ""  # Block this mapping
+                                    violations.append(f"{header} (no exact match)")
+                            
+                            # Check RIDER_TERMI_VALUE rule
+                            if header.upper() == 'RIDER_TERMI_VALUE':
+                                if 'rider' not in final_var.lower():
+                                    final_var = ""  # Block this mapping
+                                    violations.append(f"{header} → {new_var} (missing 'rider')")
+                        
                         updated_mappings[header] = final_var
                     
                     with col3:
@@ -1105,7 +1140,12 @@ def main():
                         if header not in st.session_state.removed_headers:
                             st.session_state.header_to_var_mapping[header] = var
                     
-                    st.success("✅ Changes saved!")
+                    # Show violations if any occurred
+                    if violations:
+                        st.warning(f"⚠️ **{len(violations)} business rule violations were blocked:**\n\n" + "\n".join([f"- ❌ {v}" for v in violations]))
+                    else:
+                        st.success("✅ Changes saved!")
+                    
                     st.rerun()
         
         with tab2:
