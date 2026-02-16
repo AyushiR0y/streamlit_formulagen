@@ -489,8 +489,8 @@ class VariableHeaderMatcher:
                     # Check if mapped_var is in the forbidden list
                     if any(mapped_var.upper() == ft.upper() for ft in forbidden_targets):
                         corrected_var = ""
-                        corrected_score = 0.0
-                        corrected_reason = f"Business rule violation: {header} cannot map to {mapped_var}"
+                        corrected_score = -1.0  # Special marker: intentionally blocked
+                        corrected_reason = f"BLOCKED: {header} cannot map to {mapped_var}"
                         break
             
             if not corrected_var:
@@ -504,8 +504,8 @@ class VariableHeaderMatcher:
                 if not has_exact_match:
                     # No exact match found, so don't map this variable
                     corrected_var = ""
-                    corrected_score = 0.0
-                    corrected_reason = f"Exact match required for {header} - not found in available variables"
+                    corrected_score = -1.0  # Special marker: intentionally blocked
+                    corrected_reason = f"BLOCKED: Exact match required for {header} - not found in available variables"
             
             if not corrected_var:
                 corrected_results[header] = (corrected_var, corrected_score, corrected_reason)
@@ -515,8 +515,8 @@ class VariableHeaderMatcher:
             if header.upper() == 'RIDER_TERMI_VALUE':
                 if 'rider' not in mapped_var.lower():
                     corrected_var = ""
-                    corrected_score = 0.0
-                    corrected_reason = f"RIDER_TERMI_VALUE: mapped variable must contain 'rider'"
+                    corrected_score = -1.0  # Special marker: intentionally blocked
+                    corrected_reason = f"BLOCKED: RIDER_TERMI_VALUE requires 'rider' in variable name"
             
             if not corrected_var:
                 corrected_results[header] = (corrected_var, corrected_score, corrected_reason)
@@ -581,8 +581,18 @@ class VariableHeaderMatcher:
             for idx, header in enumerate(headers):
                 ai_variable, ai_score, ai_reason = ai_results.get(header, ("", 0.0, "No AI response"))
                 
+                # Check if this mapping was intentionally blocked by validation (score = -1.0)
+                if ai_score == -1.0:
+                    # Don't apply fallback - keep it blocked
+                    mappings[header] = VariableMapping(
+                        variable_name=header,
+                        mapped_header="",
+                        confidence_score=0.0,
+                        matching_method=ai_reason,
+                        is_verified=False
+                    )
                 # Lower threshold for AI since it's more intelligent
-                if ai_variable and ai_score >= 0.6:
+                elif ai_variable and ai_score >= 0.6:
                     mappings[header] = VariableMapping(
                         variable_name=header,
                         mapped_header=ai_variable,
