@@ -738,14 +738,17 @@ def get_allowed_variables(header: str, all_variables: List[str]) -> List[str]:
     # Forbidden mappings: {header: [blocked_variables]}
     forbidden = {
         'POLICY_REF': ['policy_year'],
+        'POLICY_STATUS': ['policy_year'],  
         'DATE_OF_PAYMENT': ['DATE_OF_SURRENDER'],
+        'SV_FACTOR': ['FUND_FACTOR'],  
+        'PAIDUP_VALUE':['FUND_VALUE'],
         'INTERIM_BONUS': ['BENEFIT_TERM'],
         'ADV_PREMIUM': ['PREMIUM_TERM'],
         'ST_MVA_AMOUNT': ['SURRENDER_PAID_AMOUNT'],
     }
     
     # Variables that only map if exact match exists
-    exact_match_required = {'DIS_ADV_PREMIUM', 'SUSP_COLLECT_AMT', 'ANNUITY_AMOUNT', 'WOO_PV_VALUE'}
+    exact_match_required = {'DIS_ADV_PREMIUM', 'SUSP_COLLECT_AMT', 'ANNUITY_AMOUNT', 'WOP_PV_VALUE'}
     
     allowed = all_variables.copy()
     
