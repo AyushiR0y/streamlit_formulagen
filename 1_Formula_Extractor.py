@@ -632,37 +632,43 @@ AVAILABLE VARIABLES:
 {', '.join(self.input_variables.keys())}
 
 INSTRUCTIONS:
-1. Identify mathematical formulas or calculation methods for each variable
-2. Use available variables and generated variables from previous formulas where possible
-3. Extract the formula expression from natural language
-4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
-5. IMPORTANT: You MUST provide a formula for each requested variable. Do not skip any.
-6. If the exact formula is not clearly defined in the document:
-   - Make a reasonable inference based on similar formulas
-   - Use industry-standard calculations as fallback
-   - Provide a placeholder formula with low confidence
-7. Pay close attention to formulas involving:
-   - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
-   - Exponential terms like (1/1.05)^N
-   - Conditions like policy term > 3 years
-   - Capital Units references
-   - ON_DEATH is an important qualifier
-   - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
-8. Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sum_assured_on_death as a new variable
-9. For PAID_UP_INCOME_INSTALLMENT = Income_Benefit_Amount * Income_Benefit_Frequency along with premium info
-10. Total Premium paid will be calculated using Full term premium, number of premium paid and booking frequency.
+    1. Identify a mathematical formula or calculation method for "{formula_name}"
+    2. Use the available variables and generated variables from the previous formulas where possible
+    3. Extract the formula expression from natural language
+    4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
+    5. IMPORTANT: You MUST provide a formula for "{formula_name}". Do not skip it.
+    6. If the exact formula is not clearly defined in the document:
+    - Make a reasonable inference based on similar formulas
+    - Use industry-standard calculations as fallback
+    - Provide a placeholder formula with low confidence
+    - Example: If no formula found, you could return "{formula_name}"
+    7. Pay close attention to formulas involving:
+    - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
+    - Exponential terms like (1/1.05)^N
+    - Conditions like policy term > 3 years
+    - Capital Units references
+    - ON_DEATH is an important qualifier
+    - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
+    8. Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sum_assured_on_death as a new variable
+    9. For PAID_UP_INCOME_INSTALLMENT= Income_Benefit_Amount * Income_Benefit_Frequency will always be used.Along with that, number of premiums paid and premium term will also be relevant as given in the document.
+    10. Total Premium paid will be calculated using Full term premium, number of premium paid and booking frequency.
 
-Examples:
-- If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
-- If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
-- If document says "Sum Assured on Death is higher of sum assured, 10 times annual premium or 105% of total premium paid": return "MAX(SUM_ASSURED, 10 * ANNUAL_PREMIUM, 1.05 * TOTAL_PREMIUM_PAID)"
+    Examples:
+    - If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV) for Surrender_Paid_Amount"
+    - If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
+    - If document says "Sum Assured on Death is higher of sum assured, 10 times annual premium or amount of ROP benefit": return "MAX(SUM_ASSURED, 10 * ANNUAL_PREMIUM, ROP_Benefit)"
+    - If SSV was already extracted as a formula: use "SSV", not its components. 
+    - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED
+    - Distinguish between PAID_UP_INCOME_INSTALLMENT and Income_Benefit_Amount
 
-EXTRACT FORMULAS FOR:
+    RESPONSE FORMAT:
+    FORMULA_EXPRESSION: [mathematical expression using available variables]
+    VARIABLES_USED: [comma-separated list of variables from available list]
+    DOCUMENT_EVIDENCE: [exact text from document supporting this formula, or "INFERRED" if not explicit]
+    BUSINESS_CONTEXT: [brief explanation of what this formula calculates]
 
-{formulas_list}
-
-For each formula above, provide ONLY the four fields (FORMULA_EXPRESSION, VARIABLES_USED, DOCUMENT_EVIDENCE, BUSINESS_CONTEXT). 
-Separate each formula's response clearly. Do not output anything else."""
+    Respond with only the requested format. If you cannot find explicit documentation, make a reasonable inference.
+    """
     
         try:
             response = client.chat.completions.create(
