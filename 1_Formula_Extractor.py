@@ -241,7 +241,6 @@ class StableChunkedDocumentFormulaExtractor:
         self.config = STABLE_CHUNK_CONFIG
         self.quota_config = QUOTA_CONFIG
         self.failure_count = 0  # Track consecutive failures
-        self.api_call_count = 0  # Track total API calls (should be ~total_formulas/batch_size)
         
         # Initialize text splitter with stable configuration
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -334,70 +333,61 @@ class StableChunkedDocumentFormulaExtractor:
                 st.error("❌ API is not accessible. Using offline extraction only.")
                 return self._fallback_to_offline_extraction(text)
 
-            # Step 4: Extract formulas using batch API calls (much more efficient)
+            # Step 4: Extract formulas using quota-aware batching
             progress_bar.progress(30)
             extracted_formulas = []
             total_formulas = len(self.target_outputs)
             
-            # Show extraction method info
-            st.info(f"� **Batch Extraction Mode**: Processing {total_formulas} formulas in ~{(total_formulas + self.quota_config['batch_size'] - 1) // self.quota_config['batch_size']} API calls (vs. {total_formulas} individual calls)")
-            
-            # Process formulas in batches to API (not per-formula)
+            # Process formulas in batches to manage quota
             batch_size = self.quota_config['batch_size']
             for batch_start in range(0, len(self.target_outputs), batch_size):
                 batch_end = min(batch_start + batch_size, len(self.target_outputs))
                 batch_formulas = self.target_outputs[batch_start:batch_end]
                 
-                overall_progress = 30 + int((batch_start / total_formulas) * 60)
-                progress_bar.progress(overall_progress)
                 
-                # Check if we should stop due to too many failures
-                if self.failure_count >= self.quota_config['emergency_stop_after_failures']:
-                    st.error(f"🛑 Emergency stop: {self.failure_count} consecutive failures. Switching to offline mode.")
-                    remaining_formulas = self.target_outputs[batch_start:]
-                    for remaining_formula in remaining_formulas:
-                        offline_result = self._extract_formula_offline(remaining_formula, text)
-                        if offline_result:
-                            extracted_formulas.append(offline_result)
-                    break
-                
-                try:
-                    # Extract entire batch in ONE API call
-                    batch_results = self._extract_formulas_batch(batch_formulas, scored_chunks)
+                for i, formula_name in enumerate(batch_formulas):
+                    overall_progress = 30 + int(((batch_start + i) / total_formulas) * 60)
+                    progress_bar.progress(overall_progress)
                     
-                    if batch_results:
-                        extracted_formulas.extend(batch_results)
+                    # Check if we should stop due to too many failures
+                    if self.failure_count >= self.quota_config['emergency_stop_after_failures']:
+                        st.error(f"🛑 Emergency stop: {self.failure_count} consecutive failures. Switching to offline mode.")
+                        remaining_formulas = self.target_outputs[batch_start + i:]
+                        for remaining_formula in remaining_formulas:
+                            offline_result = self._extract_formula_offline(remaining_formula, text)
+                            if offline_result:
+                                extracted_formulas.append(offline_result)
+                        break
+                    
+                    # Use stable extraction for each formula
+                    formula_result = self._extract_formula_stable(
+                        formula_name, scored_chunks, text
+                    )
+                    
+                    if formula_result:
+                        extracted_formulas.append(formula_result)
                         self.failure_count = 0  # Reset failure count on success
                     else:
                         self.failure_count += 1
-                        # Fallback to offline for failed batch
-                        st.warning(f"⚠️ Batch extraction failed. Attempting offline extraction for {len(batch_formulas)} formulas...")
-                        for formula_name in batch_formulas:
-                            offline_result = self._extract_formula_offline(formula_name, text)
-                            if offline_result:
-                                extracted_formulas.append(offline_result)
                     
-                    # Inter-batch delay to manage quota
-                    if batch_end < len(self.target_outputs):
-                        time.sleep(1)  # Brief delay between batches
-                        
-                except Exception as e:
-                    st.warning(f"⚠️ Batch extraction error: {e}")
-                    self.failure_count += 1
-                    # Fallback to offline
-                    for formula_name in batch_formulas:
-                        offline_result = self._extract_formula_offline(formula_name, text)
-                        if offline_result:
-                            extracted_formulas.append(offline_result)
+                    # Progressive rate limiting based on success/failure
+                    if formula_result:
+                        time.sleep(0.5)  # Successful extraction
+                    else:
+                        time.sleep(1.0)  # Failed extraction, wait longer
                 
                 # Check if emergency stop was triggered
                 if self.failure_count >= self.quota_config['emergency_stop_after_failures']:
                     break
+                    
+                # Inter-batch delay to manage quota
+                if batch_end < len(self.target_outputs):
+                    time.sleep(self.quota_config['retry_delay'])
 
             progress_bar.progress(100)
             
-            # Show final stats
-            st.success(f"✅ **Batch Extraction Complete**: {len(extracted_formulas)} formulas extracted with {self.api_call_count} API call(s) (saved ~{len(self.target_outputs) - self.api_call_count} calls vs. per-formula method)")
+            
+
 
             return DocumentExtractionResult(
                 input_variables=self.input_variables,
@@ -496,28 +486,8 @@ class StableChunkedDocumentFormulaExtractor:
         # Sort by relevance score (highest first)
         return sorted(chunks, key=lambda x: x['relevance_score'], reverse=True)
 
-    def _extract_formulas_batch(self, formula_names: List[str], scored_chunks: List[Dict]) -> List[ExtractedFormula]:
-        """Extract all formulas in a single API call using JSON mode (accurate + cost-efficient)"""
-        
-        # Combine all relevant chunks for all formulas
-        all_relevant_chunks = set()
-        for formula_name in formula_names:
-            relevant_chunks = self._select_relevant_chunks_for_formula(formula_name, scored_chunks)
-            all_relevant_chunks.update(chunk['id'] for chunk in relevant_chunks)
-        
-        # Get unique chunks by id and combine context
-        unique_chunks = [chunk for chunk in scored_chunks if chunk['id'] in all_relevant_chunks]
-        combined_context = self._combine_chunks_stable(unique_chunks)
-        
-        # Show batch info
-        self.api_call_count += 1
-        st.write(f"📡 **API Call #{self.api_call_count}**: Extracting {len(formula_names)} formulas in 1 request: {', '.join(formula_names[:3])}{'...' if len(formula_names) > 3 else ''}")
-        
-        # Extract all formulas in JSON mode (structured, accurate response)
-        return self._extract_formulas_json_mode(formula_names, combined_context)
-    
     def _extract_formula_stable(self, formula_name: str, scored_chunks: List[Dict], full_text: str) -> Optional[ExtractedFormula]:
-        """Extract formula using stable chunking approach (fallback for individual extraction)"""
+        """Extract formula using stable chunking approach"""
         
         # Select top relevant chunks for this formula
         relevant_chunks = self._select_relevant_chunks_for_formula(
@@ -530,9 +500,8 @@ class StableChunkedDocumentFormulaExtractor:
         # Combine selected chunks with stable context length
         combined_context = self._combine_chunks_stable(relevant_chunks)
         
-        # Extract formula using focused prompt (single formula)
-        result = self._extract_formula_with_context(formula_name, combined_context)
-        return result if isinstance(result, ExtractedFormula) else None
+        # Extract formula using focused prompt
+        return self._extract_formula_with_context(formula_name, combined_context)
 
     def _select_relevant_chunks_for_formula(self, formula_name: str, scored_chunks: List[Dict]) -> List[Dict]:
         """Select most relevant chunks for specific formula"""
@@ -584,131 +553,6 @@ class StableChunkedDocumentFormulaExtractor:
         
         return selected_chunks
 
-    def _extract_formulas_json_mode(self, formula_names: List[str], context: str) -> List[ExtractedFormula]:
-        """Extract formulas using JSON mode for guaranteed structured output (1 API call for all)"""
-        
-        formulas_list = ", ".join([f'"{name}"' for name in formula_names])
-        
-        prompt = f"""Extract calculation formulas for the following variables from the document content.
-
-DOCUMENT CONTENT:
-{context}
-
-AVAILABLE VARIABLES:
-{', '.join(self.input_variables.keys())}
-
-Extract formulas for these variables: [{formulas_list}]
-
-INSTRUCTIONS:
-1. Extract a formula for EACH variable listed above
-2. Use available variables where possible
-3. Look carefully at variable name suffixes like "_ON_DEATH"
-4. If formula not explicitly defined, make reasonable inference
-5. For GSV/SSV: often MAX of multiple components
-6. ON_DEATH is important qualifier
-7. Total_premium_paid = FULL_TERM_PREMIUM * no_of_premium_paid * BOOKING_FREQUENCY
-
-Return ONLY valid JSON. No markdown or extra text."""
-
-        json_schema = {
-            "type": "object",
-            "properties": {
-                "formulas": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "formula_name": {"type": "string"},
-                            "formula_expression": {"type": "string"},
-                            "variables_used": {"type": "string"},
-                            "document_evidence": {"type": "string"},
-                            "business_context": {"type": "string"}
-                        },
-                        "required": ["formula_name", "formula_expression", "variables_used", "document_evidence", "business_context"]
-                    }
-                }
-            },
-            "required": ["formulas"]
-        }
-        
-        try:
-            response = client.chat.completions.create(
-                model=DEPLOYMENT_NAME,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "FormulaExtraction",
-                        "schema": json_schema,
-                        "strict": True
-                    }
-                },
-                max_tokens=2000,
-                temperature=0.1,
-                top_p=0.95
-            )
-            
-            response_text = response.choices[0].message.content
-            extracted = self._parse_json_formula_response(response_text)
-            return extracted
-            
-        except Exception as e:
-            st.error(f"❌ JSON mode extraction failed: {e}")
-            # Fallback to individual single-formula calls
-            st.info("Falling back to single-formula extraction...")
-            return self._fallback_single_formula_batch(formula_names, context)
-    
-    def _fallback_single_formula_batch(self, formula_names: List[str], context: str) -> List[ExtractedFormula]:
-        """Fallback: extract formulas individually if JSON mode fails"""
-        extracted_formulas = []
-        for formula_name in formula_names:
-            result = self._extract_formula_with_context(formula_name, context)
-            if result:
-                extracted_formulas.append(result)
-        return extracted_formulas
-    
-    def _parse_json_formula_response(self, response_text: str) -> List[ExtractedFormula]:
-        """Parse JSON response from formula extraction"""
-        extracted_formulas = []
-        
-        try:
-            response_json = json.loads(response_text)
-            formulas_list = response_json.get("formulas", [])
-            
-            for formula_data in formulas_list:
-                try:
-                    formula_name = formula_data.get("formula_name", "").strip()
-                    formula_expression = formula_data.get("formula_expression", "").strip()
-                    variables_str = formula_data.get("variables_used", "").strip()
-                    document_evidence = formula_data.get("document_evidence", "").strip()
-                    business_context = formula_data.get("business_context", "").strip()
-                    
-                    if not formula_name or not formula_expression:
-                        continue
-                    
-                    specific_variables = self._parse_variables_stable(variables_str)
-                    
-                    extracted_formulas.append(
-                        ExtractedFormula(
-                            formula_name=formula_name.upper(),
-                            formula_expression=formula_expression,
-                            variants_info="Extracted using JSON mode batch approach",
-                            business_context=business_context,
-                            source_method='json_mode_batch_extraction',
-                            document_evidence=document_evidence[:500],
-                            specific_variables=specific_variables
-                        )
-                    )
-                except Exception as e:
-                    st.warning(f"Error parsing formula in JSON response: {e}")
-                    continue
-            
-            return extracted_formulas
-            
-        except json.JSONDecodeError as e:
-            st.error(f"Failed to parse JSON response: {e}")
-            return []
-
     def _combine_chunks_stable(self, chunks: List[Dict]) -> str:
         """Combine chunks with stable context length management"""
         
@@ -732,79 +576,6 @@ Return ONLY valid JSON. No markdown or extra text."""
             current_length += len(chunk_text)
         
         return combined_text
-
-    def _extract_formulas_with_context_batch(self, formula_names: List[str], context: str) -> List[ExtractedFormula]:
-        """Extract multiple formulas in a single API call using the proven single-formula prompt format"""
-        
-        # Build a prompt for each formula in the same format as the original single-formula prompt
-        formulas_list = "\n\n".join([
-            f"FORMULA {i+1}: {name}\n" +
-            f"Extract the calculation formula for \"{name}\" from the document content above.\n" +
-            f"RESPONSE FORMAT FOR {name}:\n" +
-            f"FORMULA_EXPRESSION: [mathematical expression using available variables]\n" +
-            f"VARIABLES_USED: [comma-separated list of variables from available list]\n" +
-            f"DOCUMENT_EVIDENCE: [exact text from document supporting this formula, or \"INFERRED\" if not explicit]\n" +
-            f"BUSINESS_CONTEXT: [brief explanation of what this formula calculates]"
-            for i, name in enumerate(formula_names)
-        ])
-        
-        prompt = f"""Extract the calculation formulas for the following from the document content below.
-
-DOCUMENT CONTENT:
-{context}
-
-AVAILABLE VARIABLES:
-{', '.join(self.input_variables.keys())}
-
-INSTRUCTIONS:
-1. Identify mathematical formulas or calculation methods for each variable
-2. Use available variables and generated variables from previous formulas where possible
-3. Extract the formula expression from natural language
-4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
-5. IMPORTANT: You MUST provide a formula for each requested variable. Do not skip any.
-6. If the exact formula is not clearly defined in the document:
-   - Make a reasonable inference based on similar formulas
-   - Use industry-standard calculations as fallback
-   - Provide a placeholder formula with low confidence
-7. Pay close attention to formulas involving:
-   - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
-   - Exponential terms like (1/1.05)^N
-   - Conditions like policy term > 3 years
-   - Capital Units references
-   - ON_DEATH is an important qualifier
-   - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
-8. Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sum_assured_on_death as a new variable
-9. For PAID_UP_INCOME_INSTALLMENT = Income_Benefit_Amount * Income_Benefit_Frequency along with premium info
-10. Total Premium paid will be calculated using Full term premium, number of premium paid and booking frequency.
-
-Examples:
-- If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
-- If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
-- If document says "Sum Assured on Death is higher of sum assured, 10 times annual premium or 105% of total premium paid": return "MAX(SUM_ASSURED, 10 * ANNUAL_PREMIUM, 1.05 * TOTAL_PREMIUM_PAID)"
-
-EXTRACT FORMULAS FOR:
-
-{formulas_list}
-
-For each formula above, provide ONLY the four fields (FORMULA_EXPRESSION, VARIABLES_USED, DOCUMENT_EVIDENCE, BUSINESS_CONTEXT). 
-Separate each formula's response clearly. Do not output anything else."""
-    
-        try:
-            response = client.chat.completions.create(
-                model=DEPLOYMENT_NAME,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,
-                temperature=0.1,
-                top_p=0.95
-            )
-            
-            response_text = response.choices[0].message.content
-            extracted = self._parse_batch_formula_response(response_text, formula_names)
-            return extracted
-            
-        except Exception as e:
-            st.error(f"❌ Batch extraction failed: {e}")
-            return []
 
     def _extract_formula_with_context(self, formula_name: str, context: str) -> Optional[ExtractedFormula]:
         """Extract formula using stable context and focused prompt with fallback options"""
@@ -905,49 +676,6 @@ Separate each formula's response clearly. Do not output anything else."""
         
         return offline_result
 
-
-    def _parse_batch_formula_response(self, response_text: str, formula_names: List[str]) -> List[ExtractedFormula]:
-        """Parse batch response using single-formula format (one formula per group of fields)"""
-        
-        extracted_formulas = []
-        
-        # Split response by formula sections - look for patterns where FORMULA_EXPRESSION starts a new section
-        sections = re.split(r'(?=FORMULA\s+\d+:|FORMULA_EXPRESSION:)', response_text, maxsplit=len(formula_names))
-        
-        for i, formula_name in enumerate(formula_names):
-            # Find the section for this formula or look in the entire response
-            section = response_text if len(sections) <= 1 else (sections[i] if i < len(sections) else response_text)
-            
-            try:
-                # Extract fields using the same pattern as single-formula parsing
-                expr_match = re.search(r'FORMULA_EXPRESSION:\s*(.+?)(?=\nVARIABLES_USED|$)', section, re.DOTALL | re.IGNORECASE)
-                formula_expression = expr_match.group(1).strip() if expr_match else "Formula not clearly defined"
-                
-                var_match = re.search(r'VARIABLES_USED:\s*(.+?)(?=\nDOCUMENT_EVIDENCE|$)', section, re.DOTALL | re.IGNORECASE)
-                variables_str = var_match.group(1).strip() if var_match else ""
-                specific_variables = self._parse_variables_stable(variables_str)
-                
-                evidence_match = re.search(r'DOCUMENT_EVIDENCE:\s*(.+?)(?=\nBUSINESS_CONTEXT|$)', section, re.DOTALL | re.IGNORECASE)
-                document_evidence = evidence_match.group(1).strip() if evidence_match else "No supporting evidence found"
-                
-                context_match = re.search(r'BUSINESS_CONTEXT:\s*(.+?)(?=\nFORMULA|$)', section, re.DOTALL | re.IGNORECASE)
-                business_context = context_match.group(1).strip() if context_match else f"Calculation for {formula_name}"
-                
-                extracted_formulas.append(
-                    ExtractedFormula(
-                        formula_name=formula_name.upper(),
-                        formula_expression=formula_expression,
-                        variants_info="Extracted using batch chunking approach",
-                        business_context=business_context,
-                        source_method='batch_chunked_extraction',
-                        document_evidence=document_evidence[:500],
-                        specific_variables=specific_variables
-                    )
-                )
-            except Exception as e:
-                st.warning(f"Failed to parse formula {formula_name}: {e}")
-        
-        return extracted_formulas
 
     def _parse_stable_formula_response(self, response_text: str, formula_name: str) -> Optional[ExtractedFormula]:
         """Parse formula response with stable extraction"""
