@@ -437,93 +437,118 @@ class VariableHeaderMatcher:
         Prevents incorrect mappings and corrects them according to policy.
         
         Returns corrected mappings with updated reasons if validation failed.
+        
+        Rules:
+        - POLICY_REF: should NOT map to policy_year
+        - POLICY_STATUS: no restrictions
+        - DATE_OF_PAYMENT: should NOT map to DATE_OF_SURRENDER
+        - INTERIM_BONUS: should NOT map to BENEFIT_TERM
+        - ADV_PREMIUM: should NOT map to PREMIUM_TERM
+        - ST_MVA_AMOUNT: should NOT map to SURRENDER_PAID_AMOUNT
+        - DIS_ADV_PREMIUM, SUSP_COLLECT_AMT, ANNUITY_AMOUNT, WOO_PV_VALUE: only map if exact match exists
+        - RIDER_TERMI_VALUE: only map if 'rider' is in the variable name
+        - PV: prefer SURRENDER_PAID_AMOUNT (or any variant with 'paid')
+        - SV_FACTOR: prefer SSV1_FACTOR
         """
         
-        # Define restriction rules: {source_variable: [forbidden_mappings]}
-        # These prevent specific mappings from occurring
+        # Define what each variable/header should NOT map to: {var_name: [forbidden_targets]}
         forbidden_mappings = {
             'POLICY_REF': ['policy_year'],
-            'POLICY_STATUS': [],  # Add restrictions if needed
             'DATE_OF_PAYMENT': ['DATE_OF_SURRENDER'],
             'INTERIM_BONUS': ['BENEFIT_TERM'],
             'ADV_PREMIUM': ['PREMIUM_TERM'],
             'ST_MVA_AMOUNT': ['SURRENDER_PAID_AMOUNT'],
-            'DIS_ADV_PREMIUM': [],  # Should only map if exact match exists
-            'SUSP_COLLECT_AMT': [],  # Should only map if exact match exists
-            'ANNUITY_AMOUNT': [],  # Should only map if exact match exists
-            'WOO_PV_VALUE': [],  # Should only map if exact match exists
-            'RIDER_TERMI_VALUE': [],  # Special handling - requires 'rider' in variable
         }
         
-        # Define mandatory/preferred mappings: {source_variable: preferred_target}
+        # Variables that should ONLY map if exact match exists in available variables
+        exact_match_required_vars = {'DIS_ADV_PREMIUM', 'SUSP_COLLECT_AMT', 'ANNUITY_AMOUNT', 'WOO_PV_VALUE'}
+        
+        # Preferred mappings: try to map these variables to their preferred targets
         preferred_mappings = {
-            'PV': 'SURRENDER_PAID_AMOUNT',  # Or any variant with 'paid'
+            'PV': 'SURRENDER_PAID_AMOUNT',
             'SV_FACTOR': 'SSV1_FACTOR',
         }
         
         corrected_results = {}
-        variables_upper = [v.upper() for v in available_variables]
         
         for header, (mapped_var, score, reason) in ai_results.items():
-            header_upper = header.upper()
             corrected_var = mapped_var
             corrected_score = score
             corrected_reason = reason
-            violation = False
+            
+            # Skip if nothing was mapped
+            if not mapped_var:
+                corrected_results[header] = (corrected_var, corrected_score, corrected_reason)
+                continue
             
             # RULE 1: Check forbidden mappings
-            if header in forbidden_mappings and forbidden_mappings[header]:
-                forbidden_list = forbidden_mappings[header]
-                if mapped_var in forbidden_list:
-                    corrected_var = ""
-                    corrected_score = 0.0
-                    corrected_reason = f"Blocked: {header} cannot map to {mapped_var}"
-                    violation = True
-            
-            # RULE 2: Check if variable requires exact match in available list
-            exact_match_required_vars = ['DIS_ADV_PREMIUM', 'SUSP_COLLECT_AMT', 'ANNUITY_AMOUNT', 'WOO_PV_VALUE']
-            if header in exact_match_required_vars:
-                # Check if there's an exact match in variables
-                if not any(v.upper() == header_upper for v in available_variables):
-                    # No exact match exists, so don't map
-                    corrected_var = ""
-                    corrected_score = 0.0
-                    corrected_reason = f"No exact match for {header} in available variables"
-                    violation = True
-            
-            # RULE 3: RIDER_TERMI_VALUE special handling
-            if header == 'RIDER_TERMI_VALUE':
-                if mapped_var and 'rider' not in mapped_var.lower():
-                    corrected_var = ""
-                    corrected_score = 0.0
-                    corrected_reason = "RIDER_TERMI_VALUE must map only if 'rider' is in variable name"
-                    violation = True
-            
-            # RULE 4: Preferred mappings (override if score is reasonable)
-            if header in preferred_mappings:
-                preferred_target = preferred_mappings[header]
-                # Check if preferred target exists in available variables
-                if any(v.upper() == preferred_target.upper() or preferred_target.lower() in v.lower() for v in available_variables):
-                    # Only override if AI gave a poor match or if we can improve it significantly
-                    if score < 0.85 or mapped_var != preferred_target:
-                        # Find the exact match or close match
-                        for av in available_variables:
-                            if av.upper() == preferred_target.upper() or av.upper().startswith(preferred_target.upper()):
-                                corrected_var = av
-                                corrected_score = 0.95
-                                corrected_reason = f"Preferred mapping for {header} -> {av}"
-                                break
-            
-            # RULE 5: PV should map to anything with "PAID" if SURRENDER_PAID_AMOUNT not available
-            if header == 'PV' and not any(preferred_mappings['PV'].upper() == v.upper() for v in available_variables):
-                for av in available_variables:
-                    if 'PAID' in av.upper():
-                        corrected_var = av
-                        corrected_score = 0.90
-                        corrected_reason = f"PV mapped to {av} (paid variant)"
+            # Check if the header name matches a variable with restrictions
+            for restricted_var, forbidden_targets in forbidden_mappings.items():
+                # Check if header matches the restricted variable (case-insensitive)
+                if header.upper() == restricted_var.upper():
+                    # Check if mapped_var is in the forbidden list
+                    if any(mapped_var.upper() == ft.upper() for ft in forbidden_targets):
+                        corrected_var = ""
+                        corrected_score = 0.0
+                        corrected_reason = f"Business rule violation: {header} cannot map to {mapped_var}"
                         break
             
-            # Store corrected result
+            if not corrected_var:
+                corrected_results[header] = (corrected_var, corrected_score, corrected_reason)
+                continue
+            
+            # RULE 2: Exact match requirements
+            if header.upper() in {v.upper() for v in exact_match_required_vars}:
+                # Check if there's an exact match in available_variables
+                has_exact_match = any(v.upper() == header.upper() for v in available_variables)
+                if not has_exact_match:
+                    # No exact match found, so don't map this variable
+                    corrected_var = ""
+                    corrected_score = 0.0
+                    corrected_reason = f"Exact match required for {header} - not found in available variables"
+            
+            if not corrected_var:
+                corrected_results[header] = (corrected_var, corrected_score, corrected_reason)
+                continue
+            
+            # RULE 3: RIDER_TERMI_VALUE special handling
+            if header.upper() == 'RIDER_TERMI_VALUE':
+                if 'rider' not in mapped_var.lower():
+                    corrected_var = ""
+                    corrected_score = 0.0
+                    corrected_reason = f"RIDER_TERMI_VALUE: mapped variable must contain 'rider'"
+            
+            if not corrected_var:
+                corrected_results[header] = (corrected_var, corrected_score, corrected_reason)
+                continue
+            
+            # RULE 4: Preferred mappings (only if score is low or no match)
+            for source_var, preferred_target in preferred_mappings.items():
+                if header.upper() == source_var.upper():
+                    # Check if preferred target exists in available variables
+                    matching_targets = [v for v in available_variables 
+                                       if v.upper() == preferred_target.upper() or preferred_target.lower() in v.lower()]
+                    
+                    if matching_targets:
+                        # If score is low, prefer the target
+                        if score < 0.85:
+                            corrected_var = matching_targets[0]
+                            corrected_score = 0.95
+                            corrected_reason = f"Preferred mapping: {source_var} -> {matching_targets[0]}"
+            
+            # RULE 5: PV fallback to any PAID variant
+            if header.upper() == 'PV':
+                pref_target = preferred_mappings['PV']
+                has_pref = any(v.upper() == pref_target.upper() for v in available_variables)
+                
+                if not has_pref and score < 0.85:
+                    # Look for any variant with PAID
+                    paid_variants = [v for v in available_variables if 'PAID' in v.upper()]
+                    if paid_variants:
+                        corrected_var = paid_variants[0]
+                        corrected_score = 0.90
+                        corrected_reason = f"PV mapped to {paid_variants[0]} (paid variant)"
+            
             corrected_results[header] = (corrected_var, corrected_score, corrected_reason)
         
         return corrected_results
