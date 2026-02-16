@@ -431,6 +431,103 @@ class VariableHeaderMatcher:
             st.error(f"AI matching error: {e}")
             return {h: ("", 0.0, f"Error: {str(e)[:50]}") for h in headers}
 
+    def validate_and_correct_mappings(self, ai_results: Dict[str, Tuple[str, float, str]], available_variables: List[str]) -> Dict[str, Tuple[str, float, str]]:
+        """
+        Validates AI-generated mappings against business rules.
+        Prevents incorrect mappings and corrects them according to policy.
+        
+        Returns corrected mappings with updated reasons if validation failed.
+        """
+        
+        # Define restriction rules: {source_variable: [forbidden_mappings]}
+        # These prevent specific mappings from occurring
+        forbidden_mappings = {
+            'POLICY_REF': ['policy_year'],
+            'POLICY_STATUS': [],  # Add restrictions if needed
+            'DATE_OF_PAYMENT': ['DATE_OF_SURRENDER'],
+            'INTERIM_BONUS': ['BENEFIT_TERM'],
+            'ADV_PREMIUM': ['PREMIUM_TERM'],
+            'ST_MVA_AMOUNT': ['SURRENDER_PAID_AMOUNT'],
+            'DIS_ADV_PREMIUM': [],  # Should only map if exact match exists
+            'SUSP_COLLECT_AMT': [],  # Should only map if exact match exists
+            'ANNUITY_AMOUNT': [],  # Should only map if exact match exists
+            'WOO_PV_VALUE': [],  # Should only map if exact match exists
+            'RIDER_TERMI_VALUE': [],  # Special handling - requires 'rider' in variable
+        }
+        
+        # Define mandatory/preferred mappings: {source_variable: preferred_target}
+        preferred_mappings = {
+            'PV': 'SURRENDER_PAID_AMOUNT',  # Or any variant with 'paid'
+            'SV_FACTOR': 'SSV1_FACTOR',
+        }
+        
+        corrected_results = {}
+        variables_upper = [v.upper() for v in available_variables]
+        
+        for header, (mapped_var, score, reason) in ai_results.items():
+            header_upper = header.upper()
+            corrected_var = mapped_var
+            corrected_score = score
+            corrected_reason = reason
+            violation = False
+            
+            # RULE 1: Check forbidden mappings
+            if header in forbidden_mappings and forbidden_mappings[header]:
+                forbidden_list = forbidden_mappings[header]
+                if mapped_var in forbidden_list:
+                    corrected_var = ""
+                    corrected_score = 0.0
+                    corrected_reason = f"Blocked: {header} cannot map to {mapped_var}"
+                    violation = True
+            
+            # RULE 2: Check if variable requires exact match in available list
+            exact_match_required_vars = ['DIS_ADV_PREMIUM', 'SUSP_COLLECT_AMT', 'ANNUITY_AMOUNT', 'WOO_PV_VALUE']
+            if header in exact_match_required_vars:
+                # Check if there's an exact match in variables
+                if not any(v.upper() == header_upper for v in available_variables):
+                    # No exact match exists, so don't map
+                    corrected_var = ""
+                    corrected_score = 0.0
+                    corrected_reason = f"No exact match for {header} in available variables"
+                    violation = True
+            
+            # RULE 3: RIDER_TERMI_VALUE special handling
+            if header == 'RIDER_TERMI_VALUE':
+                if mapped_var and 'rider' not in mapped_var.lower():
+                    corrected_var = ""
+                    corrected_score = 0.0
+                    corrected_reason = "RIDER_TERMI_VALUE must map only if 'rider' is in variable name"
+                    violation = True
+            
+            # RULE 4: Preferred mappings (override if score is reasonable)
+            if header in preferred_mappings:
+                preferred_target = preferred_mappings[header]
+                # Check if preferred target exists in available variables
+                if any(v.upper() == preferred_target.upper() or preferred_target.lower() in v.lower() for v in available_variables):
+                    # Only override if AI gave a poor match or if we can improve it significantly
+                    if score < 0.85 or mapped_var != preferred_target:
+                        # Find the exact match or close match
+                        for av in available_variables:
+                            if av.upper() == preferred_target.upper() or av.upper().startswith(preferred_target.upper()):
+                                corrected_var = av
+                                corrected_score = 0.95
+                                corrected_reason = f"Preferred mapping for {header} -> {av}"
+                                break
+            
+            # RULE 5: PV should map to anything with "PAID" if SURRENDER_PAID_AMOUNT not available
+            if header == 'PV' and not any(preferred_mappings['PV'].upper() == v.upper() for v in available_variables):
+                for av in available_variables:
+                    if 'PAID' in av.upper():
+                        corrected_var = av
+                        corrected_score = 0.90
+                        corrected_reason = f"PV mapped to {av} (paid variant)"
+                        break
+            
+            # Store corrected result
+            corrected_results[header] = (corrected_var, corrected_score, corrected_reason)
+        
+        return corrected_results
+
 
     # FIX 4: Add debug output to the main matching function
     def match_all_with_ai(self, headers: List[str], variables: List[str], use_ai: bool = True) -> Dict[str, VariableMapping]:
@@ -448,6 +545,11 @@ class VariableHeaderMatcher:
             
             # Primary: AI batch matching
             ai_results = self.semantic_similarity_ai_batch(headers, variables)
+            progress_bar.progress(0.5)
+            
+            # Validate and correct AI mappings against business rules
+            status_text.text("Validating mappings against business rules...")
+            ai_results = self.validate_and_correct_mappings(ai_results, variables)
             progress_bar.progress(0.6)
             
             # Process AI results with fallback
