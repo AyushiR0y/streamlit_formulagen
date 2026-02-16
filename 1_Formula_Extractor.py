@@ -497,7 +497,7 @@ class StableChunkedDocumentFormulaExtractor:
         return sorted(chunks, key=lambda x: x['relevance_score'], reverse=True)
 
     def _extract_formulas_batch(self, formula_names: List[str], scored_chunks: List[Dict]) -> List[ExtractedFormula]:
-        """Extract multiple formulas in a single API call for efficiency"""
+        """Extract all formulas in a single API call using JSON mode (accurate + cost-efficient)"""
         
         # Combine all relevant chunks for all formulas
         all_relevant_chunks = set()
@@ -509,12 +509,12 @@ class StableChunkedDocumentFormulaExtractor:
         unique_chunks = [chunk for chunk in scored_chunks if chunk['id'] in all_relevant_chunks]
         combined_context = self._combine_chunks_stable(unique_chunks)
         
-        # Show batch info before API call
+        # Show batch info
         self.api_call_count += 1
-        st.write(f"📡 **API Call #{self.api_call_count}**: Batch extracting {len(formula_names)} formulas: {', '.join(formula_names[:3])}{'...' if len(formula_names) > 3 else ''}")
+        st.write(f"📡 **API Call #{self.api_call_count}**: Extracting {len(formula_names)} formulas in 1 request: {', '.join(formula_names[:3])}{'...' if len(formula_names) > 3 else ''}")
         
-        # Extract all formulas in a single API call
-        return self._extract_formulas_with_context_batch(formula_names, combined_context)
+        # Extract all formulas in JSON mode (structured, accurate response)
+        return self._extract_formulas_json_mode(formula_names, combined_context)
     
     def _extract_formula_stable(self, formula_name: str, scored_chunks: List[Dict], full_text: str) -> Optional[ExtractedFormula]:
         """Extract formula using stable chunking approach (fallback for individual extraction)"""
@@ -584,6 +584,131 @@ class StableChunkedDocumentFormulaExtractor:
         
         return selected_chunks
 
+    def _extract_formulas_json_mode(self, formula_names: List[str], context: str) -> List[ExtractedFormula]:
+        """Extract formulas using JSON mode for guaranteed structured output (1 API call for all)"""
+        
+        formulas_list = ", ".join([f'"{name}"' for name in formula_names])
+        
+        prompt = f"""Extract calculation formulas for the following variables from the document content.
+
+DOCUMENT CONTENT:
+{context}
+
+AVAILABLE VARIABLES:
+{', '.join(self.input_variables.keys())}
+
+Extract formulas for these variables: [{formulas_list}]
+
+INSTRUCTIONS:
+1. Extract a formula for EACH variable listed above
+2. Use available variables where possible
+3. Look carefully at variable name suffixes like "_ON_DEATH"
+4. If formula not explicitly defined, make reasonable inference
+5. For GSV/SSV: often MAX of multiple components
+6. ON_DEATH is important qualifier
+7. Total_premium_paid = FULL_TERM_PREMIUM * no_of_premium_paid * BOOKING_FREQUENCY
+
+Return ONLY valid JSON. No markdown or extra text."""
+
+        json_schema = {
+            "type": "object",
+            "properties": {
+                "formulas": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "formula_name": {"type": "string"},
+                            "formula_expression": {"type": "string"},
+                            "variables_used": {"type": "string"},
+                            "document_evidence": {"type": "string"},
+                            "business_context": {"type": "string"}
+                        },
+                        "required": ["formula_name", "formula_expression", "variables_used", "document_evidence", "business_context"]
+                    }
+                }
+            },
+            "required": ["formulas"]
+        }
+        
+        try:
+            response = client.chat.completions.create(
+                model=DEPLOYMENT_NAME,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "FormulaExtraction",
+                        "schema": json_schema,
+                        "strict": True
+                    }
+                },
+                max_tokens=2000,
+                temperature=0.1,
+                top_p=0.95
+            )
+            
+            response_text = response.choices[0].message.content
+            extracted = self._parse_json_formula_response(response_text)
+            return extracted
+            
+        except Exception as e:
+            st.error(f"❌ JSON mode extraction failed: {e}")
+            # Fallback to individual single-formula calls
+            st.info("Falling back to single-formula extraction...")
+            return self._fallback_single_formula_batch(formula_names, context)
+    
+    def _fallback_single_formula_batch(self, formula_names: List[str], context: str) -> List[ExtractedFormula]:
+        """Fallback: extract formulas individually if JSON mode fails"""
+        extracted_formulas = []
+        for formula_name in formula_names:
+            result = self._extract_formula_with_context(formula_name, context)
+            if result:
+                extracted_formulas.append(result)
+        return extracted_formulas
+    
+    def _parse_json_formula_response(self, response_text: str) -> List[ExtractedFormula]:
+        """Parse JSON response from formula extraction"""
+        extracted_formulas = []
+        
+        try:
+            response_json = json.loads(response_text)
+            formulas_list = response_json.get("formulas", [])
+            
+            for formula_data in formulas_list:
+                try:
+                    formula_name = formula_data.get("formula_name", "").strip()
+                    formula_expression = formula_data.get("formula_expression", "").strip()
+                    variables_str = formula_data.get("variables_used", "").strip()
+                    document_evidence = formula_data.get("document_evidence", "").strip()
+                    business_context = formula_data.get("business_context", "").strip()
+                    
+                    if not formula_name or not formula_expression:
+                        continue
+                    
+                    specific_variables = self._parse_variables_stable(variables_str)
+                    
+                    extracted_formulas.append(
+                        ExtractedFormula(
+                            formula_name=formula_name.upper(),
+                            formula_expression=formula_expression,
+                            variants_info="Extracted using JSON mode batch approach",
+                            business_context=business_context,
+                            source_method='json_mode_batch_extraction',
+                            document_evidence=document_evidence[:500],
+                            specific_variables=specific_variables
+                        )
+                    )
+                except Exception as e:
+                    st.warning(f"Error parsing formula in JSON response: {e}")
+                    continue
+            
+            return extracted_formulas
+            
+        except json.JSONDecodeError as e:
+            st.error(f"Failed to parse JSON response: {e}")
+            return []
+
     def _combine_chunks_stable(self, chunks: List[Dict]) -> str:
         """Combine chunks with stable context length management"""
         
@@ -632,43 +757,37 @@ AVAILABLE VARIABLES:
 {', '.join(self.input_variables.keys())}
 
 INSTRUCTIONS:
-    1. Identify a mathematical formula or calculation method for "{formula_name}"
-    2. Use the available variables and generated variables from the previous formulas where possible
-    3. Extract the formula expression from natural language
-    4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
-    5. IMPORTANT: You MUST provide a formula for "{formula_name}". Do not skip it.
-    6. If the exact formula is not clearly defined in the document:
-    - Make a reasonable inference based on similar formulas
-    - Use industry-standard calculations as fallback
-    - Provide a placeholder formula with low confidence
-    - Example: If no formula found, you could return "{formula_name}"
-    7. Pay close attention to formulas involving:
-    - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
-    - Exponential terms like (1/1.05)^N
-    - Conditions like policy term > 3 years
-    - Capital Units references
-    - ON_DEATH is an important qualifier
-    - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
-    8. Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sum_assured_on_death as a new variable
-    9. For PAID_UP_INCOME_INSTALLMENT= Income_Benefit_Amount * Income_Benefit_Frequency will always be used.Along with that, number of premiums paid and premium term will also be relevant as given in the document.
-    10. Total Premium paid will be calculated using Full term premium, number of premium paid and booking frequency.
+1. Identify mathematical formulas or calculation methods for each variable
+2. Use available variables and generated variables from previous formulas where possible
+3. Extract the formula expression from natural language
+4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
+5. IMPORTANT: You MUST provide a formula for each requested variable. Do not skip any.
+6. If the exact formula is not clearly defined in the document:
+   - Make a reasonable inference based on similar formulas
+   - Use industry-standard calculations as fallback
+   - Provide a placeholder formula with low confidence
+7. Pay close attention to formulas involving:
+   - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
+   - Exponential terms like (1/1.05)^N
+   - Conditions like policy term > 3 years
+   - Capital Units references
+   - ON_DEATH is an important qualifier
+   - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
+8. Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sum_assured_on_death as a new variable
+9. For PAID_UP_INCOME_INSTALLMENT = Income_Benefit_Amount * Income_Benefit_Frequency along with premium info
+10. Total Premium paid will be calculated using Full term premium, number of premium paid and booking frequency.
 
-    Examples:
-    - If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV) for Surrender_Paid_Amount"
-    - If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
-    - If document says "Sum Assured on Death is higher of sum assured, 10 times annual premium or amount of ROP benefit": return "MAX(SUM_ASSURED, 10 * ANNUAL_PREMIUM, ROP_Benefit)"
-    - If SSV was already extracted as a formula: use "SSV", not its components. 
-    - If asking for PAID_UP_SA_ON_DEATH: use SUM_ASSURED_ON_DEATH, not SUM_ASSURED
-    - Distinguish between PAID_UP_INCOME_INSTALLMENT and Income_Benefit_Amount
+Examples:
+- If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
+- If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
+- If document says "Sum Assured on Death is higher of sum assured, 10 times annual premium or 105% of total premium paid": return "MAX(SUM_ASSURED, 10 * ANNUAL_PREMIUM, 1.05 * TOTAL_PREMIUM_PAID)"
 
-    RESPONSE FORMAT:
-    FORMULA_EXPRESSION: [mathematical expression using available variables]
-    VARIABLES_USED: [comma-separated list of variables from available list]
-    DOCUMENT_EVIDENCE: [exact text from document supporting this formula, or "INFERRED" if not explicit]
-    BUSINESS_CONTEXT: [brief explanation of what this formula calculates]
+EXTRACT FORMULAS FOR:
 
-    Respond with only the requested format. If you cannot find explicit documentation, make a reasonable inference.
-    """
+{formulas_list}
+
+For each formula above, provide ONLY the four fields (FORMULA_EXPRESSION, VARIABLES_USED, DOCUMENT_EVIDENCE, BUSINESS_CONTEXT). 
+Separate each formula's response clearly. Do not output anything else."""
     
         try:
             response = client.chat.completions.create(
