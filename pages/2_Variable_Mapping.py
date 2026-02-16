@@ -730,6 +730,42 @@ def apply_mappings_to_formulas(formulas: List[Dict], header_to_var_mapping: Dict
     return mapped_formulas
 
 
+def get_allowed_variables(header: str, all_variables: List[str]) -> List[str]:
+    """
+    Simple hardcoded function: returns list of variables allowed to map to this header.
+    Blocks forbidden mappings, enforces exact match requirements, and RIDER_TERMI_VALUE rule.
+    """
+    # Forbidden mappings: {header: [blocked_variables]}
+    forbidden = {
+        'POLICY_REF': ['policy_year'],
+        'DATE_OF_PAYMENT': ['DATE_OF_SURRENDER'],
+        'INTERIM_BONUS': ['BENEFIT_TERM'],
+        'ADV_PREMIUM': ['PREMIUM_TERM'],
+        'ST_MVA_AMOUNT': ['SURRENDER_PAID_AMOUNT'],
+    }
+    
+    # Variables that only map if exact match exists
+    exact_match_required = {'DIS_ADV_PREMIUM', 'SUSP_COLLECT_AMT', 'ANNUITY_AMOUNT', 'WOO_PV_VALUE'}
+    
+    allowed = all_variables.copy()
+    
+    # RULE 1: Remove forbidden variables for this header
+    if header in forbidden:
+        blocked_vars = forbidden[header]
+        allowed = [v for v in allowed if v.upper() not in [b.upper() for b in blocked_vars]]
+    
+    # RULE 2: If header requires exact match, only allow if exact match exists
+    if header.upper() in {v.upper() for v in exact_match_required}:
+        if header not in all_variables:
+            return []  # No exact match exists - don't allow any mapping
+    
+    # RULE 3: RIDER_TERMI_VALUE only allows variables with 'rider' in name
+    if header.upper() == 'RIDER_TERMI_VALUE':
+        allowed = [v for v in allowed if 'rider' in v.lower()]
+    
+    return allowed
+
+
 def load_css(file_name="style.css"):
     """
     Loads CSS file. Automatically handles cases where the script
@@ -1051,20 +1087,9 @@ def main():
             # Filter out removed headers
             active_headers = [h for h in st.session_state.excel_headers if h not in st.session_state.removed_headers]
             
-            # Define business rules for validation
-            forbidden_mappings = {
-                'POLICY_REF': ['policy_year'],
-                'DATE_OF_PAYMENT': ['DATE_OF_SURRENDER'],
-                'INTERIM_BONUS': ['BENEFIT_TERM'],
-                'ADV_PREMIUM': ['PREMIUM_TERM'],
-                'ST_MVA_AMOUNT': ['SURRENDER_PAID_AMOUNT'],
-            }
-            exact_match_required = {'DIS_ADV_PREMIUM', 'SUSP_COLLECT_AMT', 'ANNUITY_AMOUNT', 'WOO_PV_VALUE'}
-            
             # Create a form to batch updates
             with st.form(key="mapping_form"):
                 updated_mappings = {}
-                violations = []  # Track violations to show at end
                 
                 for header in active_headers:
                     # Get current mapping for this header
@@ -1076,8 +1101,9 @@ def main():
                         st.text_input("Header", value=header, key=f"h_txt_{header}", label_visibility="collapsed", disabled=True)
                     
                     with col2:
-                        # Dropdown options: (None) + all variables
-                        dropdown_options = ["(None of the following)"] + current_variables
+                        # Get allowed variables for this header based on business rules
+                        allowed_vars = get_allowed_variables(header, current_variables)
+                        dropdown_options = ["(None of the following)"] + allowed_vars
                         
                         # Determine index based on current mapping
                         if current_var and current_var in dropdown_options:
@@ -1096,30 +1122,6 @@ def main():
                         
                         # Store in temporary dict (will be applied on form submit)
                         final_var = "" if new_var == "(None of the following)" else new_var
-                        
-                        # INLINE VALIDATION: Check business rules
-                        if final_var:  # Only validate if something is selected
-                            # Check forbidden mappings
-                            for forbidden_header, forbidden_targets in forbidden_mappings.items():
-                                if header.upper() == forbidden_header.upper():
-                                    for forbidden_target in forbidden_targets:
-                                        if final_var.upper() == forbidden_target.upper():
-                                            final_var = ""  # Block this mapping
-                                            violations.append(f"{header} → {new_var}")
-                                            break
-                            
-                            # Check exact match requirements
-                            if header.upper() in {v.upper() for v in exact_match_required}:
-                                if not any(v.upper() == header.upper() for v in current_variables):
-                                    final_var = ""  # Block this mapping
-                                    violations.append(f"{header} (no exact match)")
-                            
-                            # Check RIDER_TERMI_VALUE rule
-                            if header.upper() == 'RIDER_TERMI_VALUE':
-                                if 'rider' not in final_var.lower():
-                                    final_var = ""  # Block this mapping
-                                    violations.append(f"{header} → {new_var} (missing 'rider')")
-                        
                         updated_mappings[header] = final_var
                     
                     with col3:
@@ -1140,12 +1142,7 @@ def main():
                         if header not in st.session_state.removed_headers:
                             st.session_state.header_to_var_mapping[header] = var
                     
-                    # Show violations if any occurred
-                    if violations:
-                        st.warning(f"⚠️ **{len(violations)} business rule violations were blocked:**\n\n" + "\n".join([f"- ❌ {v}" for v in violations]))
-                    else:
-                        st.success("✅ Changes saved!")
-                    
+                    st.success("✅ Changes saved!")
                     st.rerun()
         
         with tab2:
