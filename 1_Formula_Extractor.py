@@ -340,7 +340,7 @@ class StableChunkedDocumentFormulaExtractor:
             total_formulas = len(self.target_outputs)
             
             # Show extraction method info
-            st.info(f"🚀 **Batch Extraction Mode**: Processing {total_formulas} formulas in ~{(total_formulas + self.quota_config['batch_size'] - 1) // self.quota_config['batch_size']} API calls (vs. {total_formulas} individual calls)")
+            st.info(f"� **Batch Extraction Mode**: Processing {total_formulas} formulas in ~{(total_formulas + self.quota_config['batch_size'] - 1) // self.quota_config['batch_size']} API calls (vs. {total_formulas} individual calls)")
             
             # Process formulas in batches to API (not per-formula)
             batch_size = self.quota_config['batch_size']
@@ -609,14 +609,21 @@ class StableChunkedDocumentFormulaExtractor:
         return combined_text
 
     def _extract_formulas_with_context_batch(self, formula_names: List[str], context: str) -> List[ExtractedFormula]:
-        """Extract multiple formulas in a single API call using stable context"""
+        """Extract multiple formulas in a single API call using the proven single-formula prompt format"""
         
-        formulas_list = "\n".join([f"{i+1}. {name}" for i, name in enumerate(formula_names)])
+        # Build a prompt for each formula in the same format as the original single-formula prompt
+        formulas_list = "\n\n".join([
+            f"FORMULA {i+1}: {name}\n" +
+            f"Extract the calculation formula for \"{name}\" from the document content above.\n" +
+            f"RESPONSE FORMAT FOR {name}:\n" +
+            f"FORMULA_EXPRESSION: [mathematical expression using available variables]\n" +
+            f"VARIABLES_USED: [comma-separated list of variables from available list]\n" +
+            f"DOCUMENT_EVIDENCE: [exact text from document supporting this formula, or \"INFERRED\" if not explicit]\n" +
+            f"BUSINESS_CONTEXT: [brief explanation of what this formula calculates]"
+            for i, name in enumerate(formula_names)
+        ])
         
-        prompt = f"""Extract calculation formulas for the following variables from the document content.
-
-FORMULAS TO EXTRACT:
-{formulas_list}
+        prompt = f"""Extract the calculation formulas for the following from the document content below.
 
 DOCUMENT CONTENT:
 {context}
@@ -625,37 +632,43 @@ AVAILABLE VARIABLES:
 {', '.join(self.input_variables.keys())}
 
 INSTRUCTIONS:
-1. Extract formulas for ALL requested variables from the document
-2. Use available variables and previously extracted formulas where possible
-3. Look carefully at variable name suffixes like "_ON_DEATH" - use correct variants
-4. For each formula, provide complete information
-5. If a formula is not explicitly defined:
-   - Make reasonable inference based on similar formulas
+1. Identify mathematical formulas or calculation methods for each variable
+2. Use available variables and generated variables from previous formulas where possible
+3. Extract the formula expression from natural language
+4. Look carefully at variable name suffixes like "_ON_DEATH" - use the correct variant
+5. IMPORTANT: You MUST provide a formula for each requested variable. Do not skip any.
+6. If the exact formula is not clearly defined in the document:
+   - Make a reasonable inference based on similar formulas
    - Use industry-standard calculations as fallback
-   - Mark as "INFERRED" in evidence
-6. Pay attention to:
-   - GSV, SSV formulas (often MAX of multiple components)
+   - Provide a placeholder formula with low confidence
+7. Pay close attention to formulas involving:
+   - Terms around GSV, SSV (Surrender Paid Amount is usually a max of multiple components)
    - Exponential terms like (1/1.05)^N
    - Conditions like policy term > 3 years
-   - ON_DEATH qualifiers
-   - Total_premium_paid = FULL_TERM_PREMIUM * no_of_premium_paid * BOOKING_FREQUENCY
-7. Reuse already-extracted variables (e.g., PAID_UP_SA_ON_DEATH) instead of defining new ones
+   - Capital Units references
+   - ON_DEATH is an important qualifier
+   - Total_premium_paid is the number of premiums paid multiplied by the premium amount. Full_term_premium is the annual premium amount.
+8. Reuse PAID_UP_SA_ON_DEATH in future formulas instead of adding Present_Value_of_paid_up_sum_assured_on_death as a new variable
+9. For PAID_UP_INCOME_INSTALLMENT = Income_Benefit_Amount * Income_Benefit_Frequency along with premium info
+10. Total Premium paid will be calculated using Full term premium, number of premium paid and booking frequency.
 
-RESPONSE FORMAT (for each formula, use this exact structure):
----FORMULA: [FORMULA_NAME]---
-FORMULA_EXPRESSION: [mathematical expression]
-VARIABLES_USED: [comma-separated list]
-DOCUMENT_EVIDENCE: [exact text or "INFERRED"]
-BUSINESS_CONTEXT: [brief explanation]
----END_FORMULA---
+Examples:
+- If document says "surrender value is higher of GSV or SSV": return "MAX(GSV, SSV)"
+- If document says "GSV factors will be applied to total premiums paid": return "GSV_FACTOR * TOTAL_PREMIUM_PAID"
+- If document says "Sum Assured on Death is higher of sum assured, 10 times annual premium or 105% of total premium paid": return "MAX(SUM_ASSURED, 10 * ANNUAL_PREMIUM, 1.05 * TOTAL_PREMIUM_PAID)"
 
-Important: Include ALL formulas requested in the response."""
+EXTRACT FORMULAS FOR:
+
+{formulas_list}
+
+For each formula above, provide ONLY the four fields (FORMULA_EXPRESSION, VARIABLES_USED, DOCUMENT_EVIDENCE, BUSINESS_CONTEXT). 
+Separate each formula's response clearly. Do not output anything else."""
     
         try:
             response = client.chat.completions.create(
                 model=DEPLOYMENT_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=3000,
+                max_tokens=2000,
                 temperature=0.1,
                 top_p=0.95
             )
@@ -769,47 +782,45 @@ Important: Include ALL formulas requested in the response."""
 
 
     def _parse_batch_formula_response(self, response_text: str, formula_names: List[str]) -> List[ExtractedFormula]:
-        """Parse batch response containing multiple formulas"""
+        """Parse batch response using single-formula format (one formula per group of fields)"""
         
         extracted_formulas = []
         
-        # Split by formula markers
-        formula_blocks = re.split(r'---FORMULA:\s*(.+?)---', response_text)
+        # Split response by formula sections - look for patterns where FORMULA_EXPRESSION starts a new section
+        sections = re.split(r'(?=FORMULA\s+\d+:|FORMULA_EXPRESSION:)', response_text, maxsplit=len(formula_names))
         
-        # Process pairs of (formula_name, formula_content)
-        for i in range(1, len(formula_blocks), 2):
-            if i + 1 < len(formula_blocks):
-                formula_name = formula_blocks[i].strip()
-                formula_content = formula_blocks[i + 1]
+        for i, formula_name in enumerate(formula_names):
+            # Find the section for this formula or look in the entire response
+            section = response_text if len(sections) <= 1 else (sections[i] if i < len(sections) else response_text)
+            
+            try:
+                # Extract fields using the same pattern as single-formula parsing
+                expr_match = re.search(r'FORMULA_EXPRESSION:\s*(.+?)(?=\nVARIABLES_USED|$)', section, re.DOTALL | re.IGNORECASE)
+                formula_expression = expr_match.group(1).strip() if expr_match else "Formula not clearly defined"
                 
-                try:
-                    # Extract fields from content
-                    expr_match = re.search(r'FORMULA_EXPRESSION:\s*(.+?)(?=\nVARIABLES|$)', formula_content, re.DOTALL)
-                    formula_expression = expr_match.group(1).strip() if expr_match else "Formula not extracted"
-                    
-                    var_match = re.search(r'VARIABLES_USED:\s*(.+?)(?=\nDOCUMENT|$)', formula_content, re.DOTALL)
-                    variables_str = var_match.group(1).strip() if var_match else ""
-                    specific_variables = self._parse_variables_stable(variables_str)
-                    
-                    evidence_match = re.search(r'DOCUMENT_EVIDENCE:\s*(.+?)(?=\nBUSINESS|$)', formula_content, re.DOTALL)
-                    document_evidence = evidence_match.group(1).strip() if evidence_match else "No evidence"
-                    
-                    context_match = re.search(r'BUSINESS_CONTEXT:\s*(.+?)(?=\n---|$)', formula_content, re.DOTALL)
-                    business_context = context_match.group(1).strip() if context_match else f"Calculation for {formula_name}"
-                    
-                    extracted_formulas.append(
-                        ExtractedFormula(
-                            formula_name=formula_name.upper(),
-                            formula_expression=formula_expression,
-                            variants_info="Extracted using batch chunking approach",
-                            business_context=business_context,
-                            source_method='batch_chunked_extraction',
-                            document_evidence=document_evidence[:500],
-                            specific_variables=specific_variables
-                        )
+                var_match = re.search(r'VARIABLES_USED:\s*(.+?)(?=\nDOCUMENT_EVIDENCE|$)', section, re.DOTALL | re.IGNORECASE)
+                variables_str = var_match.group(1).strip() if var_match else ""
+                specific_variables = self._parse_variables_stable(variables_str)
+                
+                evidence_match = re.search(r'DOCUMENT_EVIDENCE:\s*(.+?)(?=\nBUSINESS_CONTEXT|$)', section, re.DOTALL | re.IGNORECASE)
+                document_evidence = evidence_match.group(1).strip() if evidence_match else "No supporting evidence found"
+                
+                context_match = re.search(r'BUSINESS_CONTEXT:\s*(.+?)(?=\nFORMULA|$)', section, re.DOTALL | re.IGNORECASE)
+                business_context = context_match.group(1).strip() if context_match else f"Calculation for {formula_name}"
+                
+                extracted_formulas.append(
+                    ExtractedFormula(
+                        formula_name=formula_name.upper(),
+                        formula_expression=formula_expression,
+                        variants_info="Extracted using batch chunking approach",
+                        business_context=business_context,
+                        source_method='batch_chunked_extraction',
+                        document_evidence=document_evidence[:500],
+                        specific_variables=specific_variables
                     )
-                except Exception as e:
-                    st.warning(f"Failed to parse formula {formula_name}: {e}")
+                )
+            except Exception as e:
+                st.warning(f"Failed to parse formula {formula_name}: {e}")
         
         return extracted_formulas
 
