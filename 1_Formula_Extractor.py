@@ -241,6 +241,7 @@ class StableChunkedDocumentFormulaExtractor:
         self.config = STABLE_CHUNK_CONFIG
         self.quota_config = QUOTA_CONFIG
         self.failure_count = 0  # Track consecutive failures
+        self.api_call_count = 0  # Track total API calls (should be ~total_formulas/batch_size)
         
         # Initialize text splitter with stable configuration
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -338,6 +339,9 @@ class StableChunkedDocumentFormulaExtractor:
             extracted_formulas = []
             total_formulas = len(self.target_outputs)
             
+            # Show extraction method info
+            st.info(f"🚀 **Batch Extraction Mode**: Processing {total_formulas} formulas in ~{(total_formulas + self.quota_config['batch_size'] - 1) // self.quota_config['batch_size']} API calls (vs. {total_formulas} individual calls)")
+            
             # Process formulas in batches to API (not per-formula)
             batch_size = self.quota_config['batch_size']
             for batch_start in range(0, len(self.target_outputs), batch_size):
@@ -392,8 +396,8 @@ class StableChunkedDocumentFormulaExtractor:
 
             progress_bar.progress(100)
             
-            
-
+            # Show final stats
+            st.success(f"✅ **Batch Extraction Complete**: {len(extracted_formulas)} formulas extracted with {self.api_call_count} API call(s) (saved ~{len(self.target_outputs) - self.api_call_count} calls vs. per-formula method)")
 
             return DocumentExtractionResult(
                 input_variables=self.input_variables,
@@ -504,6 +508,10 @@ class StableChunkedDocumentFormulaExtractor:
         # Get unique chunks by id and combine context
         unique_chunks = [chunk for chunk in scored_chunks if chunk['id'] in all_relevant_chunks]
         combined_context = self._combine_chunks_stable(unique_chunks)
+        
+        # Show batch info before API call
+        self.api_call_count += 1
+        st.write(f"📡 **API Call #{self.api_call_count}**: Batch extracting {len(formula_names)} formulas: {', '.join(formula_names[:3])}{'...' if len(formula_names) > 3 else ''}")
         
         # Extract all formulas in a single API call
         return self._extract_formulas_with_context_batch(formula_names, combined_context)
